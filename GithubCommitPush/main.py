@@ -75,7 +75,7 @@ def github_webhook():
             msg = msg.replace(r, "")
 
         commit_id = c.get('id', '')[:7]  # 取前7位
-        commit_messages.append(f"- [{commit_id}] {author} 于 {datetime.fromisoformat(time).strftime('%Y-%m-%d %H:%M:%S')} 提交：\n {msg} \n > {url} ")
+        commit_messages.append(f"- {author} 于 {datetime.fromisoformat(time).strftime('%Y/%m/%d %H:%M:%S')} 提交 [{commit_id}]:\n| {url}\n| {msg} ")
 
     # 拼装要发送的文本
     final_text = (
