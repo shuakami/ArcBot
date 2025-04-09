@@ -28,7 +28,7 @@ def send_msg_to_group(text, time_str):
         {
             "type": "text",
             "data": {
-                "text": f"{text}\n\nPush时间：{time_str}\n"
+                "text": f"{text}\n\n于 {time_str} 推送\n"
             }
         }
     ]
