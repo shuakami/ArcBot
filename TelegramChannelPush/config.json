@@ -1,0 +1,23 @@
+{
+  "api_id": "",
+  "api_hash": "",
+  "phone_number": "+",
+  "channel_username": "",
+  "debug": false,
+  "proxy": {
+    "proxy_type": "socks5",
+    "addr": "localhost",
+    "port": 7890,
+    "rdns": true
+  },
+  "napcat_url": "http://ip:port/send_group_msg",
+  "napcat_token": "",
+  "napcat_group_ids": [
+    "10001"
+  ],
+  "removal_strings": [
+    "投稿",
+    "频道"
+  ]
+}
+  

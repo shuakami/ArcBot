@@ -1,0 +1,4 @@
+PySocks
+pytz
+telethon
+requests
