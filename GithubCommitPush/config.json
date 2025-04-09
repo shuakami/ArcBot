@@ -1,0 +1,13 @@
+{
+  "webhook_host": "0.0.0.0",
+  "webhook_port": 60000,
+  "webhook_secret": "xxx",
+  "napcat_url": "http://ip:port/send_group_msg",
+  "napcat_token": "xxx",
+  "napcat_group_ids": [
+    "10001"
+  ],
+  "removal_strings": [
+    "Exmaple"
+  ]
+}
