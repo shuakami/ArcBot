@@ -1,6 +1,6 @@
 # ArcBot Telegram 转发 & 多群分发 Bot ️🤖
 
-> 一个基于 [Telethon](https://github.com/LonamiWebs/Telethon) 的 Python 脚本，用于监听指定 Telegram 频道，并自动将消息（含多图）转发到多个目标群。可配置关键词清理、尾部正则清理等功能。
+> 一个基于 [Telethon](https://github.com/LonamiWebs/Telethon)  +  [NapcatQQ](https://github.com/NapNeko/NapCatQQ) 的 Python 脚本，用于监听指定 Telegram 频道，并自动将消息（含多图）转发到多个QQ目标群。可配置关键词清理、尾部正则清理等功能。
 
 ## 功能概览 ⚡
 
