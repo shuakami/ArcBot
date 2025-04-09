@@ -44,13 +44,20 @@ def github_webhook():
     event = request.headers.get('X-GitHub-Event', '')
     if event != 'push':
         return jsonify({"msg": "not a push event"}), 200
-
-    repository = data.get('repository', {})
-    repo_name = repository.get('full_name', 'UnknownRepo')
-    pusher = data.get('pusher', {}).get('name', 'UnknownPusher')
+    
+    # 分支名
     ref = data.get('ref', 'refs/heads/???')
     branch = ref.split('/')[-1] if 'refs/heads/' in ref else ref
 
+    # 仓库信息
+    repository = data.get('repository', {})
+    # 仓库名
+    repo_name = repository.get('full_name', 'UnknownRepo')
+    # 是否私有仓库
+    privete_repo = repository.get('private', 'Unknown')
+
+    # 推送/提交者信息
+    pusher = data.get('pusher', {}).get('name', 'UnknownPusher')
     commits = data.get('commits', [])
     if not commits:
         return jsonify({"msg": "no commits"}), 200
@@ -58,22 +65,24 @@ def github_webhook():
     # 整理所有提交信息
     commit_messages = []
     for c in commits:
+        url = c.get('url', '')
         msg = c.get('message', '')
         author = c.get('author', {}).get('name', 'UnknownAuthor')
+        time = c.get('timestamp', '')
 
         # 对消息做关键字移除
         for r in removal_strings:
             msg = msg.replace(r, "")
 
         commit_id = c.get('id', '')[:7]  # 取前7位
-        commit_messages.append(f"- {author} 提交：{msg} [commit: {commit_id}]")
+        commit_messages.append(f"✅ [{commit_id}] {author} 于 {datetime.fromisoformat(time).strftime('%Y-%m-%d %H:%M:%S')} 提交：\n {msg} \n > {url} ")
 
     # 拼装要发送的文本
     final_text = (
-        f"仓库：{repo_name}\n"
-        f"分支：{branch}\n"
-        f"推送者：{pusher}\n\n"
-        "提交详情：\n" +
+        f"🌐 仓库：{repo_name}\n"
+        f"📄 分支：{branch}\n"
+        f"🤔 推送：{pusher}\n\n"
+        "📂 提交详情：\n" +
         "\n".join(commit_messages)
     )
 
