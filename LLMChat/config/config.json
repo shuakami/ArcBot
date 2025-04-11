@@ -1,0 +1,14 @@
+{
+    "qqbot": {
+      "ws_url": "ws://ip:port/",
+      "token": "xxx",
+      "admin_qq": "10001",
+      "list_mode": "black"
+    },
+    "ai": {
+      "api_url": "https://api.deepseek.com/chat/completions",
+      "token": "sk-xxx",
+      "model": "deepseek-chat"
+    }
+}
+  
