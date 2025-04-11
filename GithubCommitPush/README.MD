@@ -1,6 +1,6 @@
 # 🚀 ArcBot - GitHub Webhook Push Bot 🔔
 
-> 一个基于 [Telethon](https://github.com/LonamiWebs/Telethon)  +  [NapcatQQ](https://github.com/NapNeko/NapCatQQ) 的轻量级服务，用于监听 **GitHub** 仓库的 `push` 事件，并自动将提交信息发送到多个QQ目标群。
+> 一个基于 [NapcatQQ](https://github.com/NapNeko/NapCatQQ) 的轻量级服务，用于监听 **GitHub** 仓库的 `push` 事件，并自动将提交信息发送到多个QQ目标群。
 
 - **快速 & 简洁**：无多余依赖，轻松部署  
 - **可配置**：`config.json` 里集中管理监听地址、Token、群号、需清理的字符等  
