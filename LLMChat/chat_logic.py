@@ -7,6 +7,7 @@ from logger import log_message
 from post import send_ws_message, set_input_status
 from utils import extract_text_from_message
 from whitelist import is_whitelisted
+from group_manager import is_group_enabled
 
 def handle_private_message(msg_dict):
     try:
@@ -53,6 +54,11 @@ def handle_private_message(msg_dict):
 
 def handle_group_message(msg_dict):
     try:
+        group_id = str(msg_dict.get("group_id", ""))
+        # 检查群聊是否启用
+        if not is_group_enabled(group_id):
+            return
+
         raw_message = msg_dict.get("raw_message", "")
         # 群聊中只有以 "#" 开头的消息才触发回复
         if not raw_message.startswith("#"):
@@ -70,7 +76,6 @@ def handle_group_message(msg_dict):
         username = sender.get("nickname", "")
         message_id = str(msg_dict.get("message_id", ""))
         timestamp = msg_dict.get("time", int(time.time()))
-        group_id = str(msg_dict.get("group_id", ""))
         
         # 记录群聊消息
         log_message(user_id, username, message_id, raw_message, timestamp, group_id)

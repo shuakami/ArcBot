@@ -1,6 +1,6 @@
 import json
 from chat_logic import handle_group_message, handle_private_message
-from command_handler import process_reset_command, process_admin_command
+from command_handler import process_reset_command, process_admin_command, process_group_management_command
 
 def handle_incoming_message(message):
     try:
