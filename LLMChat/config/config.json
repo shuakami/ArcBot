@@ -8,7 +8,8 @@
     "ai": {
       "api_url": "https://api.deepseek.com/chat/completions",
       "token": "sk-xxx",
-      "model": "deepseek-chat"
+      "model": "deepseek-chat",
+      "max_context_tokens": 15000
     }
 }
   

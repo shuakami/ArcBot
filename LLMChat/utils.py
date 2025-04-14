@@ -39,3 +39,10 @@ def save_conversation_history(id_str, history, chat_type="private"):
     history_file = get_history_file(id_str, chat_type)
     with open(history_file, "w", encoding="utf-8") as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
+
+def estimate_tokens(text):
+    """基于字符数估算 Token 数，平均 1.5 字符约为 1 Token（虽然tokenizer更准确但是要挂梯子来下文件"""
+    if not isinstance(text, str):
+        return 0
+    estimated_tokens = (len(text) * 2) // 3 + 1
+    return estimated_tokens
