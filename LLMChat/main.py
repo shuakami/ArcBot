@@ -1,5 +1,5 @@
 from logger import init_db
-from post import init_ws
+from napcat.post import init_ws
 
 def main():
     # 初始化消息记录数据库
