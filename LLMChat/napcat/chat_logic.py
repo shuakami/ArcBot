@@ -31,31 +31,33 @@ def check_access(sender_id, is_group=False):
         return is_whitelisted(sender_id, is_group)
     return True
 
-def parse_ai_message_to_segments(text: str) -> list[MessageSegment]:
+def parse_ai_message_to_segments(text: str, current_msg_id: int = None) -> list[MessageSegment]:
     """
-    解析AI输出，将[@qq:123456]和[reply:消息ID]等结构化标记转为MessageSegment。
+    解析AI输出，将[@qq:123456]和[reply]等结构化标记转为MessageSegment。
+    [reply]会自动用当前消息ID，无需AI指定。
     支持多段@、回复，兼容原有text消息。
     """
     segments = []
-    # 检查是否为回复
-    reply_match = re.match(r"^\[reply:(\d+)]", text)
+    # 检查是否为[reply]或[reply:xxx]
+    reply_match = re.match(r"^\[reply(?::(\d+))?]", text)
     if reply_match:
-        reply_id = int(reply_match.group(1))
-        segments.append({"type": "reply", "data": {"id": reply_id}})
-        text = re.sub(r"^\[reply:\d+\]", "", text, count=1)
+        reply_id = reply_match.group(1)
+        if reply_id:
+            segments.append({"type": "reply", "data": {"id": int(reply_id)}})
+        elif current_msg_id is not None:
+            segments.append({"type": "reply", "data": {"id": int(current_msg_id)}})
+        text = re.sub(r"^\[reply(?::\d+)?]", "", text, count=1)
     # 解析@和文本混合
     pattern = re.compile(r"\[@qq:(\d+)]")
     last_idx = 0
     for m in pattern.finditer(text):
         if m.start() > last_idx:
-            # 前面是普通文本
             seg_text = text[last_idx:m.start()]
             if seg_text.strip():
                 segments.append({"type": "text", "data": {"text": seg_text}})
         qq = m.group(1)
         segments.append({"type": "at", "data": {"qq": qq}})
         last_idx = m.end()
-    # 剩余文本
     if last_idx < len(text):
         seg_text = text[last_idx:]
         if seg_text.strip():
@@ -91,7 +93,7 @@ def handle_private_message(msg_dict, sender: IMessageSender):
             for segment in process_conversation(user_id, content, chat_type="private"):
                 sender.set_input_status(user_id)
                 time.sleep(random.uniform(1.0, 3.0))
-                msg_segments = parse_ai_message_to_segments(segment)
+                msg_segments = parse_ai_message_to_segments(segment, message_id)
                 sender.send_private_msg(int(user_id), msg_segments)
 
         threading.Thread(target=process_and_send, daemon=True).start()
@@ -140,7 +142,7 @@ def handle_group_message(msg_dict, sender: IMessageSender):
         # 异步处理回复消息，实现流式发送效果
         def process_and_send():
             for segment in process_conversation(group_id, user_content, chat_type="group"):
-                msg_segments = parse_ai_message_to_segments(segment)
+                msg_segments = parse_ai_message_to_segments(segment, message_id)
                 sender.send_group_msg(int(group_id), msg_segments)
                 time.sleep(random.uniform(1.0, 3.0))
 
