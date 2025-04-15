@@ -1,58 +1,39 @@
 import os
 
 from config import CONFIG, save_config
-from napcat.post import send_ws_message
 from utils.blacklist import add_blacklist, remove_blacklist
 from utils.files import get_history_file
 from utils.text import extract_text_from_message
 from utils.whitelist import add_whitelist, remove_whitelist
+from napcat.message_sender import IMessageSender
 
 
-def send_reply(msg_dict, reply):
+def send_reply(msg_dict, reply, sender: IMessageSender):
     """
     根据消息类型构造回复 payload 并发送回复消息。
     """
     if msg_dict.get("message_type") == "private":
-        payload = {
-            "action": "send_private_msg",
-            "params": {
-                "user_id": int(msg_dict["sender"]["user_id"]),
-                "message": [{
-                    "type": "text",
-                    "data": {"text": reply}
-                }]
-            }
-        }
+        sender.send_private_msg(int(msg_dict["sender"]["user_id"]), reply)
     else:
-        payload = {
-            "action": "send_group_msg",
-            "params": {
-                "group_id": int(msg_dict.get("group_id")),
-                "message": [{
-                    "type": "text",
-                    "data": {"text": reply}
-                }]
-            }
-        }
-    send_ws_message(payload)
+        sender.send_group_msg(int(msg_dict.get("group_id")), reply)
 
 
-def process_command(msg_dict):
+def process_command(msg_dict, sender: IMessageSender):
     text = extract_text_from_message(msg_dict)
     if text.startswith("/arcreset"):
-        return process_reset_command(msg_dict)
+        return process_reset_command(msg_dict, sender)
     elif text.startswith("/archelp"):
-        return process_help_command(msg_dict)
+        return process_help_command(msg_dict, sender)
     elif text.startswith("/arcblack") or text.startswith("/arcwhite"):
-        return process_listmod_command(msg_dict)
+        return process_listmod_command(msg_dict, sender)
     elif text.startswith("/arcqqlist"):
-        return process_msg_list_command(msg_dict)
+        return process_msg_list_command(msg_dict, sender)
     elif text.startswith("/arcgrouplist"):
-        return process_group_list_command(msg_dict)
+        return process_group_list_command(msg_dict, sender)
     return False
 
 
-def process_help_command(msg_dict):
+def process_help_command(msg_dict, sender: IMessageSender):
     """
     处理菜单指令 /archelp，显示管理员相关命令使用方法：
     """
@@ -71,11 +52,11 @@ def process_help_command(msg_dict):
         "| /arcgrouplist [white/black] - 切换群聊名单模式\n"
     )
 
-    send_reply(msg_dict, help_text)
+    send_reply(msg_dict, help_text, sender)
     return True
 
 
-def process_reset_command(msg_dict):
+def process_reset_command(msg_dict, sender: IMessageSender):
     """
     处理 /arcreset 命令：
       - 私聊：任何人发送 /arcreset 重置自己的对话记录
@@ -117,11 +98,11 @@ def process_reset_command(msg_dict):
         else:
             reply = "你没有聊天记录。"
 
-    send_reply(msg_dict, reply)
+    send_reply(msg_dict, reply, sender)
     return True
 
 
-def process_listmod_command(msg_dict):
+def process_listmod_command(msg_dict, sender: IMessageSender):
     """
     处理黑白名单管理相关指令：
       命令格式统一支持两类对象：QQ 或 群
@@ -132,8 +113,8 @@ def process_listmod_command(msg_dict):
         - /arcwhite add [QQ/Q群] [msg/group]
         - /arcwhite remove [QQ/Q群] [msg/group]
       
-      “msg” 表示用户消息黑白名单，
-      “group” 表示群聊黑白名单。
+      "msg" 表示用户消息黑白名单，
+      "group" 表示群聊黑白名单。
       
       仅允许配置中的 admin_qq 执行相关命令。命令处理完毕后直接回复提示信息，并返回 True；
       如果不是名单管理命令，则返回 False。
@@ -146,13 +127,13 @@ def process_listmod_command(msg_dict):
     # 判断管理员权限
     if sender_qq not in admin_list:
         reply = "无权限执行该命令。"
-        send_reply(msg_dict, reply)
+        send_reply(msg_dict, reply, sender)
         return True
 
     tokens = text.split()
     if len(tokens) < 4:
         reply = "命令格式错误，请使用：/arcblack add/remove [QQ/Q群] [msg/group] 或 /arcwhite add/remove [QQ/Q群] [msg/group]"
-        send_reply(msg_dict, reply)
+        send_reply(msg_dict, reply, sender)
         return True
     # tokens[0] 为命令，如 /arcblack 或 /arcwhite
     # tokens[1] 为 add 或 remove
@@ -224,11 +205,11 @@ def process_listmod_command(msg_dict):
     else:
         reply = "无效的命令。"
 
-    send_reply(msg_dict, reply)
+    send_reply(msg_dict, reply, sender)
     return True
 
 
-def process_msg_list_command(msg_dict):
+def process_msg_list_command(msg_dict, sender: IMessageSender):
     """
     处理修改用户消息名单模式指令：
       - /arcqqlist [white/black]
@@ -247,10 +228,10 @@ def process_msg_list_command(msg_dict):
         save_config()
         reply = f"私聊名单模式已切换为 {new_mode}。"
     
-    send_reply(msg_dict, reply)
+    send_reply(msg_dict, reply, sender)
     return True
 
-def process_group_list_command(msg_dict):
+def process_group_list_command(msg_dict, sender: IMessageSender):
     """
     处理修改群聊名单模式指令：
       - /arcgrouplist [white/black]
@@ -269,5 +250,5 @@ def process_group_list_command(msg_dict):
         save_config()
         reply = f"群聊名单模式已切换为 {new_mode}。"
     
-    send_reply(msg_dict, reply)
+    send_reply(msg_dict, reply, sender)
     return True
