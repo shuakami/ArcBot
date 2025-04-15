@@ -1,14 +1,16 @@
 import time
 import threading
 import random
+import re
 
 from config import CONFIG
 from llm import process_conversation
 from logger import log_message
-from napcat.post import send_ws_message, set_input_status
 from utils.blacklist import is_blacklisted
 from utils.text import extract_text_from_message
 from utils.whitelist import is_whitelisted
+from napcat.message_sender import IMessageSender
+from napcat.message_types import MessageSegment
 
 
 def check_access(sender_id, is_group=False):
@@ -29,22 +31,53 @@ def check_access(sender_id, is_group=False):
         return is_whitelisted(sender_id, is_group)
     return True
 
-def handle_private_message(msg_dict):
+def parse_ai_message_to_segments(text: str) -> list[MessageSegment]:
+    """
+    解析AI输出，将[@qq:123456]和[reply:消息ID]等结构化标记转为MessageSegment。
+    支持多段@、回复，兼容原有text消息。
+    """
+    segments = []
+    # 检查是否为回复
+    reply_match = re.match(r"^\[reply:(\d+)]", text)
+    if reply_match:
+        reply_id = int(reply_match.group(1))
+        segments.append({"type": "reply", "data": {"id": reply_id}})
+        text = re.sub(r"^\[reply:\d+\]", "", text, count=1)
+    # 解析@和文本混合
+    pattern = re.compile(r"\[@qq:(\d+)]")
+    last_idx = 0
+    for m in pattern.finditer(text):
+        if m.start() > last_idx:
+            # 前面是普通文本
+            seg_text = text[last_idx:m.start()]
+            if seg_text.strip():
+                segments.append({"type": "text", "data": {"text": seg_text}})
+        qq = m.group(1)
+        segments.append({"type": "at", "data": {"qq": qq}})
+        last_idx = m.end()
+    # 剩余文本
+    if last_idx < len(text):
+        seg_text = text[last_idx:]
+        if seg_text.strip():
+            segments.append({"type": "text", "data": {"text": seg_text}})
+    return segments if segments else [{"type": "text", "data": {"text": text}}]
+
+def handle_private_message(msg_dict, sender: IMessageSender):
     """
     处理私聊消息：
       - 记录消息日志
       - 异步生成回复，达到流式发送的效果
     """
     try:
-        sender = msg_dict["sender"]
-        user_id = str(sender["user_id"])
-        if CONFIG["debug"]: print(f"收到私聊消息: {user_id} - {sender.get('nickname', '')}")
+        sender_info = msg_dict["sender"]
+        user_id = str(sender_info["user_id"])
+        if CONFIG["debug"]: print(f"收到私聊消息: {user_id} - {sender_info.get('nickname', '')}")
 
         # 检查是否允许处理该消息
         if not check_access(user_id):
             return
 
-        username = sender.get("nickname", "")
+        username = sender_info.get("nickname", "")
         message_id = str(msg_dict.get("message_id", ""))
         content = extract_text_from_message(msg_dict)
         timestamp = msg_dict.get("time", int(time.time()))
@@ -56,19 +89,10 @@ def handle_private_message(msg_dict):
         # 异步处理回复消息，实现流式发送效果
         def process_and_send():
             for segment in process_conversation(user_id, content, chat_type="private"):
-                set_input_status(user_id)
+                sender.set_input_status(user_id)
                 time.sleep(random.uniform(1.0, 3.0))
-                payload = {
-                    "action": "send_private_msg",
-                    "params": {
-                        "user_id": int(user_id),
-                        "message": [{
-                            "type": "text",
-                            "data": {"text": segment}
-                        }]
-                    }
-                }
-                send_ws_message(payload)
+                msg_segments = parse_ai_message_to_segments(segment)
+                sender.send_private_msg(int(user_id), msg_segments)
 
         threading.Thread(target=process_and_send, daemon=True).start()
 
@@ -76,7 +100,7 @@ def handle_private_message(msg_dict):
         print("处理私聊消息异常:", e)
 
 
-def handle_group_message(msg_dict):
+def handle_group_message(msg_dict, sender: IMessageSender):
     """
     处理群聊消息：
       - 记录消息日志
@@ -92,18 +116,17 @@ def handle_group_message(msg_dict):
 
         # 移除 '#' 前缀后的消息内容
         content = raw_message.lstrip(group_prefix).strip()
-        sender = msg_dict["sender"]
-        user_id = str(sender["user_id"])
-        if CONFIG["debug"]: print(f"收到群聊消息: {group_id} - {user_id} - {sender.get('nickname', '')}")
+        sender_info = msg_dict["sender"]
+        user_id = str(sender_info["user_id"])
+        if CONFIG["debug"]: print(f"收到群聊消息: {group_id} - {user_id} - {sender_info.get('nickname', '')}")
 
         # 检查是否允许处理该消息
         if not check_access(group_id, True):
             return
-        
         if not check_access(user_id):
             return
 
-        username = sender.get("nickname", "")
+        username = sender_info.get("nickname", "")
         message_id = str(msg_dict.get("message_id", ""))
         timestamp = msg_dict.get("time", int(time.time()))
 
@@ -117,17 +140,8 @@ def handle_group_message(msg_dict):
         # 异步处理回复消息，实现流式发送效果
         def process_and_send():
             for segment in process_conversation(group_id, user_content, chat_type="group"):
-                payload = {
-                    "action": "send_group_msg",
-                    "params": {
-                        "group_id": int(group_id),
-                        "message": [{
-                            "type": "text",
-                            "data": {"text": segment}
-                        }]
-                    }
-                }
-                send_ws_message(payload)
+                msg_segments = parse_ai_message_to_segments(segment)
+                sender.send_group_msg(int(group_id), msg_segments)
                 time.sleep(random.uniform(1.0, 3.0))
 
         threading.Thread(target=process_and_send, daemon=True).start()
