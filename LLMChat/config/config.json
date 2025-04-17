@@ -15,5 +15,11 @@
     "token": "sk-xxx",
     "model": "deepseek-chat",
     "max_context_tokens": 15000
+  },
+  "image_ai": {
+    "api_url": "https://api.deepseek.com/v1/chat/completions",
+    "token": "sk-xxx",
+    "model": "deepseek-chat",
+    "max_context_tokens": 15000
   }
 }
