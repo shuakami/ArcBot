@@ -11,6 +11,7 @@ from utils.text import extract_text_from_message
 from utils.whitelist import is_whitelisted
 from napcat.message_sender import IMessageSender
 from napcat.message_types import MessageSegment
+from utils.message_content import parse_group_message_content
 
 
 def check_access(sender_id, is_group=False):
@@ -119,8 +120,8 @@ def handle_group_message(msg_dict, sender: IMessageSender):
         if not raw_message.startswith(group_prefix):
             return
 
-        # 移除 '#' 前缀后的消息内容
-        content = raw_message.lstrip(group_prefix).strip()
+        # 解析图片/表情包/文本
+        content = parse_group_message_content(msg_dict)
         sender_info = msg_dict["sender"]
         user_id = str(sender_info["user_id"])
         if CONFIG["debug"]: print(f"收到群聊消息: {group_id} - {user_id} - {sender_info.get('nickname', '')}")
