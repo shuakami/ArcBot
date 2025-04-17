@@ -83,14 +83,17 @@ def handle_private_message(msg_dict, sender: IMessageSender):
         message_id = str(msg_dict.get("message_id", ""))
         content = extract_text_from_message(msg_dict)
         timestamp = msg_dict.get("time", int(time.time()))
+        # 格式化时间戳前缀
+        time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+        content_with_time = f"[时间:{time_str}] {content}"
 
         # 记录消息日志
-        log_message(user_id, username, message_id, content, timestamp)
-        print(f"\nQ: {username}[{user_id}] \n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {content}")
+        log_message(user_id, username, message_id, content_with_time, timestamp)
+        print(f"\nQ: {username}[{user_id}] \n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {content_with_time}")
 
         # 异步处理回复消息，实现流式发送效果
         def process_and_send():
-            for segment in process_conversation(user_id, content, chat_type="private"):
+            for segment in process_conversation(user_id, content_with_time, chat_type="private"):
                 sender.set_input_status(user_id)
                 time.sleep(random.uniform(1.0, 3.0))
                 msg_segments = parse_ai_message_to_segments(segment, message_id)
@@ -138,10 +141,13 @@ def handle_group_message(msg_dict, sender: IMessageSender):
 
         # 将用户信息附加到消息中
         user_content = f"[用户{user_id}-{username}] {content}"
+        # 格式化时间戳前缀
+        time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+        user_content_with_time = f"[时间:{time_str}] {user_content}"
 
         # 异步处理回复消息，实现流式发送效果
         def process_and_send():
-            for segment in process_conversation(group_id, user_content, chat_type="group"):
+            for segment in process_conversation(group_id, user_content_with_time, chat_type="group"):
                 msg_segments = parse_ai_message_to_segments(segment, message_id)
                 sender.send_group_msg(int(group_id), msg_segments)
                 time.sleep(random.uniform(1.0, 3.0))
