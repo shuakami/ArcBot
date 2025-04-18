@@ -119,3 +119,5 @@ data/
 
 # tests cache
 tests/__pycache__/ 
+
+changes.txt
