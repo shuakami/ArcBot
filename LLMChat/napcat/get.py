@@ -3,6 +3,7 @@ from config import CONFIG
 from napcat.chat_logic import handle_group_message, handle_private_message
 from napcat.command_handler import process_command
 from napcat.message_sender import WebSocketSender
+import asyncio
 
 def handle_incoming_message(message):
     try:
@@ -23,6 +24,10 @@ def handle_incoming_message(message):
             handle_private_message(msg, sender)
         elif msg.get("message_type") == "group":
             if CONFIG["debug"]: print("处理群聊消息")
-            handle_group_message(msg, sender)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(handle_group_message(msg, sender))
+            except RuntimeError:
+                asyncio.run(handle_group_message(msg, sender))
     except Exception as e:
         print("处理ws消息异常:", e)
