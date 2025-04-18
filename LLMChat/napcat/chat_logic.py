@@ -2,6 +2,7 @@ import time
 import threading
 import random
 import re
+import asyncio
 
 from config import CONFIG
 from llm import process_conversation
@@ -74,7 +75,7 @@ def handle_private_message(msg_dict, sender: IMessageSender):
         print("处理私聊消息异常:", e)
 
 
-def handle_group_message(msg_dict, sender: IMessageSender):
+async def handle_group_message(msg_dict, sender: IMessageSender):
     """
     处理群聊消息：
       - 记录消息日志
@@ -117,7 +118,16 @@ def handle_group_message(msg_dict, sender: IMessageSender):
         # 异步处理回复消息，实现流式发送效果
         def process_and_send():
             for segment in process_conversation(group_id, user_content_with_time, chat_type="group"):
-                msg_segments = parse_ai_message_to_segments(segment, message_id)
+                try:
+                    # 使用 asyncio.run() 同步执行异步函数
+                    msg_segments = asyncio.run(parse_ai_message_to_segments(segment, message_id))
+                except RuntimeError as e:
+                    print(f"在线程中运行 asyncio.run(parse_ai_message_to_segments) 出错: {e}. 可能事件循环已在运行。")
+                    continue
+                except Exception as parse_e:
+                    print(f"解析 AI 消息段时出错: {parse_e}")
+                    continue # 解析失败则跳过此段
+                
                 sender.send_group_msg(int(group_id), msg_segments)
                 time.sleep(random.uniform(1.0, 3.0))
 
