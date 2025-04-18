@@ -34,34 +34,42 @@ def check_access(sender_id, is_group=False):
 
 def parse_ai_message_to_segments(text: str, current_msg_id: int = None) -> list[MessageSegment]:
     """
-    解析AI输出，将[@qq:123456]和[reply]等结构化标记转为MessageSegment。
-    [reply]会自动用当前消息ID，无需AI指定。
-    支持多段@、回复，兼容原有text消息。
+    解析AI输出，将[@qq:...]、[CQ:at,qq=...]和[reply]/[reply:id]等结构化标记转为MessageSegment。
+    支持任意位置、任意次数混用。
+    [reply]无ID时自动用当前消息ID，无需AI指定。
     """
     segments = []
-    # 检查是否为[reply]或[reply:xxx]
-    reply_match = re.match(r"^\[reply(?::(\d+))?]", text)
-    if reply_match:
-        reply_id = reply_match.group(1)
-        if reply_id:
-            segments.append({"type": "reply", "data": {"id": int(reply_id)}})
-        elif current_msg_id is not None:
-            segments.append({"type": "reply", "data": {"id": int(current_msg_id)}})
-        text = re.sub(r"^\[reply(?::\d+)?]", "", text, count=1)
-    # 解析@和文本混合
-    pattern = re.compile(r"\[@qq:(\d+)]")
+    # 统一匹配所有支持的标记：[reply]/[reply:id]、[@qq:id]、[CQ:at,qq=id]
+    pattern = re.compile(r"(\[reply(?::(\d+))?])|(\[@qq:(\d+)])|(\[CQ:at,qq=(\d+)])")
     last_idx = 0
     for m in pattern.finditer(text):
+        # 添加标记前的文本段
         if m.start() > last_idx:
-            seg_text = text[last_idx:m.start()]
-            if seg_text.strip():
+            seg_text = text[last_idx:m.start()].strip()
+            if seg_text:
                 segments.append({"type": "text", "data": {"text": seg_text}})
-        qq = m.group(1)
-        segments.append({"type": "at", "data": {"qq": qq}})
+        # 判断匹配到的标记类型并处理
+        if m.group(1):  # 匹配到 [reply] 或 [reply:id]
+            reply_id_str = m.group(2)
+            if reply_id_str:
+                reply_id = int(reply_id_str)
+            elif current_msg_id is not None:
+                reply_id = int(current_msg_id)
+            else:
+                reply_id = None # 无法获取ID，忽略该标记？或抛异常？暂定忽略
+            if reply_id is not None:
+                segments.append({"type": "reply", "data": {"id": reply_id}})
+        elif m.group(3): # 匹配到 [@qq:id]
+            qq = m.group(4)
+            segments.append({"type": "at", "data": {"qq": qq}})
+        elif m.group(5): # 匹配到 [CQ:at,qq=id]
+            qq = m.group(6)
+            segments.append({"type": "at", "data": {"qq": qq}})
         last_idx = m.end()
+    # 添加最后一个标记后的文本段
     if last_idx < len(text):
-        seg_text = text[last_idx:]
-        if seg_text.strip():
+        seg_text = text[last_idx:].strip()
+        if seg_text:
             segments.append({"type": "text", "data": {"text": seg_text}})
     return segments if segments else [{"type": "text", "data": {"text": text}}]
 
