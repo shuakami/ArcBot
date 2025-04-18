@@ -13,6 +13,7 @@ def describe_image(image_source: str, image_type: str = "url") -> str:
     """
     识图接口：根据图片来源(URL或路径)返回描述。
     """
+    print(f"[DEBUG] describe_image: source='{image_source}', type='{image_type}'")
     prompt_path = os.path.join(os.path.dirname(__file__), '../config/image_system_prompt.txt')
     try:
         with open(prompt_path, 'r', encoding='utf-8') as f:
@@ -26,9 +27,10 @@ def describe_image(image_source: str, image_type: str = "url") -> str:
     ]
     try:
         desc = get_ai_response_with_image(conversation, image=image_source, image_type=image_type)
+        print(f"[DEBUG] describe_image: Success, desc='{desc[:100]}...' ")
         return f"[图片内容描述: {desc.strip()}]"
     except Exception as e:
-        # 返回包含具体错误信息的字符串
+        print(f"[ERROR] describe_image: Failed, error='{str(e)}'")
         return f"[图片内容描述获取失败: {str(e)}]"
 
 def get_mface_description(mface_data: dict) -> str:
@@ -59,6 +61,7 @@ def parse_group_message_content(msg_dict: Dict[str, Any]) -> str:
         seg_type = seg.get("type")
         data = seg.get("data", {})
         temp_file_path = None # 当前循环的临时文件路径
+        print(f"[DEBUG] parse_group_message: Found {seg_type}, data='{data}'")
 
         try:
             if seg_type == "text":
@@ -66,15 +69,18 @@ def parse_group_message_content(msg_dict: Dict[str, Any]) -> str:
             elif seg_type == "image" or seg_type == "mface":
                 image_source_path = None
                 is_temp_file = False
+                file_path = data.get("file")
+                url = data.get("url")
+                print(f"[DEBUG] parse_group_message: Found {seg_type}, file='{file_path}', url='{url}'")
 
                 # 1. 优先尝试 file 字段
-                file_path = data.get("file")
-                if file_path and os.path.exists(file_path): # 简单检查路径是否存在
+                if file_path and os.path.exists(file_path):
                     image_source_path = file_path
+                    print(f"[DEBUG] parse_group_message: Using local file path: {image_source_path}")
                 else:
                     # 2. file 无效，尝试 url 下载
-                    url = data.get("url")
                     if url:
+                        print(f"[DEBUG] parse_group_message: File path invalid or missing, attempting download from URL: {url}")
                         try:
                             response = requests.get(url, stream=True, timeout=10) # 增加超时
                             response.raise_for_status() # 检查HTTP错误
@@ -86,6 +92,7 @@ def parse_group_message_content(msg_dict: Dict[str, Any]) -> str:
                                 temp_files_to_delete.append(temp_file_path) # 加入待删除列表
                                 image_source_path = temp_file_path
                                 is_temp_file = True
+                                print(f"[DEBUG] parse_group_message: Downloaded to temporary file: {image_source_path}")
                         except requests.exceptions.RequestException as req_e:
                             print(f"下载图片URL失败: {url}, Error: {req_e}")
                         except IOError as io_e:
