@@ -7,9 +7,9 @@ from config import CONFIG
 
 # 动态设置 image_ai 配置
 CONFIG["image_ai"] = {
-    "api_url": "",
-    "token": "",
-    "model": "" 
+    "api_url": "https://dashscope.aliyuncs.com/api/v1/services/vision/text-image-generation/generation",
+    "token": "sk-89e09d80ab994548bf28fcedc01cd791",
+    "model": "qwen-vl-plus"
 }
 
 IMAGE_PATH = r"E:\Users\Shuakami\Pictures\b_1a4986c89ad467790613b670c9856082.jpg"
