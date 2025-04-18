@@ -1,5 +1,6 @@
 import json
 import requests
+import base64
 from config import CONFIG
 
 def get_ai_response(conversation):
@@ -60,54 +61,85 @@ def get_ai_response(conversation):
 
 def get_ai_response_with_image(conversation, image=None, image_type="url"):
     """
-    调用支持图片输入的 AI 接口，基于 conversation 内容和图片返回完整回复（非流式）。
-    参数：
-      conversation: 对话上下文消息列表，格式同 get_ai_response
-      image: 可选，图片内容，可以是 URL、base64 字符串或本地文件路径
-      image_type: 指定图片类型，"url"（默认）、"base64"、"file"（自动读取为base64）
-    返回：
-      完整AI回复内容（字符串）
-    用法示例：
-      reply = get_ai_response_with_image(conv, image="http://xxx.jpg", image_type="url")
+    自动判断API类型：
+    - 如果image_ai.api_url包含'dashscope.aliyuncs.com'，用dashscope SDK
+    - 否则用OpenAI兼容HTTP请求
     """
-    headers = {
-        "Authorization": f"Bearer {CONFIG['image_ai']['token']}",
-        "Content-Type": "application/json"
-    }
-    messages = list(conversation)
-    if image:
-        # 构造图片消息结构（OpenAI兼容格式）
-        if image_type == "file":
-            import base64
-            with open(image, "rb") as f:
-                image_data = base64.b64encode(f.read()).decode()
-            image_obj = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
-        elif image_type == "base64":
-            image_obj = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}}
-        else:  # url
-            image_obj = {"type": "image_url", "image_url": {"url": image}}
-        # 图片和文本一起作为最后一条 user 消息
-        if messages and messages[-1].get("role") == "user":
-            if "content" in messages[-1] and isinstance(messages[-1]["content"], list):
-                messages[-1]["content"].append(image_obj)
-            elif "content" in messages[-1]:
-                messages[-1]["content"] = [messages[-1]["content"], image_obj]
+    api_url = CONFIG['image_ai']['api_url']
+    token = CONFIG['image_ai']['token']
+    model = CONFIG['image_ai']['model']
+    # 自动处理本地图片为base64
+    if image_type == "file" and image:
+        with open(image, "rb") as f:
+            image = base64.b64encode(f.read()).decode()
+        image_type = "base64"
+    # 判断是否为阿里云DashScope
+    if "dashscope.aliyuncs.com" in api_url:
+        try:
+            import dashscope
+        except ImportError:
+            raise Exception("未检测到dashscope库，请先安装：pip install dashscope")
+        dashscope.api_key = token
+        messages = []
+        for msg in conversation:
+            if msg["role"] == "user" and image:
+                content = []
+                if "content" in msg:
+                    if isinstance(msg["content"], str):
+                        content.append({"text": msg["content"]})
+                    elif isinstance(msg["content"], list):
+                        content.extend(msg["content"])
+                if image_type == "base64":
+                    content.append({"image": f"data:image/png;base64,{image}"})
+                else:
+                    content.append({"image": image})
+                messages.append({"role": msg["role"], "content": content})
             else:
-                messages[-1]["content"] = [image_obj]
-        else:
-            messages.append({"role": "user", "content": [image_obj]})
-    payload = {
-        "model": CONFIG["image_ai"]["model"],
-        "messages": messages,
-        "stream": False
-    }
-    # print("[DEBUG] image_ai payload:", json.dumps(payload, ensure_ascii=False)[:1000])
-    response = requests.post(CONFIG["image_ai"]["api_url"], headers=headers, json=payload)
-    # print("[DEBUG] image_ai response status:", response.status_code)
-    # print("[DEBUG] image_ai response text:", response.text[:2000])
-    if response.status_code != 200:
-        raise Exception(f"AI接口调用失败, 状态码：{response.status_code}, {response.text}")
-    data = response.json()
-    # 兼容OpenAI格式，取完整回复
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    return content 
+                messages.append(msg)
+        try:
+            response = dashscope.MultiModalConversation.call(
+                model=model,
+                messages=messages
+            )
+            if response.status_code == 200:
+                return response.output.choices[0].message.content
+            else:
+                raise Exception(f"调用失败: {response.code}, {response.message}")
+        except Exception as e:
+            raise Exception(f"调用DashScope API失败: {str(e)}")
+    else:
+        # OpenAI兼容HTTP请求
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        messages = list(conversation)
+        if image:
+            image_obj = None
+            if image_type == "base64":
+                image_obj = {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}}
+            else:
+                image_obj = {"type": "image_url", "image_url": {"url": image}}
+            if messages and messages[-1].get("role") == "user":
+                if "content" in messages[-1] and isinstance(messages[-1]["content"], list):
+                    messages[-1]["content"].append(image_obj)
+                elif "content" in messages[-1]:
+                    messages[-1]["content"] = [messages[-1]["content"], image_obj]
+                else:
+                    messages[-1]["content"] = [image_obj]
+            else:
+                messages.append({"role": "user", "content": [image_obj]})
+        payload = {
+            "model": model,
+            "messages": messages,
+            "stream": False
+        }
+        try:
+            response = requests.post(api_url, headers=headers, json=payload)
+            if response.status_code != 200:
+                raise Exception(f"AI接口调用失败, 状态码：{response.status_code}, {response.text}")
+            data = response.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return content
+        except Exception as e:
+            raise Exception(f"调用OpenAI兼容API失败: {str(e)}") 

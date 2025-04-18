@@ -9,8 +9,7 @@ from config import CONFIG
 CONFIG["image_ai"] = {
     "api_url": "",
     "token": "",
-    "model": "gpt-4o-mini",
-    "max_context_tokens": 15000
+    "model": "" 
 }
 
 IMAGE_PATH = r"E:\Users\Shuakami\Pictures\b_1a4986c89ad467790613b670c9856082.jpg"
