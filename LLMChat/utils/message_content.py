@@ -27,8 +27,20 @@ def describe_image(image_source: str, image_type: str = "url") -> str:
     ]
     try:
         desc = get_ai_response_with_image(conversation, image=image_source, image_type=image_type)
-        print(f"[DEBUG] describe_image: Success, desc='{desc[:100]}...' ")
-        return f"[图片内容描述: {desc.strip()}]"
+        print(f"[DEBUG] describe_image: Success, desc='{str(desc)[:100]}...' ")
+        # 兼容 desc 为 list 或 str
+        desc_text = None
+        if isinstance(desc, list):
+            # 取第一个元素的 text 字段
+            if desc and isinstance(desc[0], dict) and 'text' in desc[0]:
+                desc_text = desc[0]['text']
+            else:
+                desc_text = str(desc)
+        elif isinstance(desc, str):
+            desc_text = desc
+        else:
+            desc_text = str(desc)
+        return f"[图片内容描述: {desc_text.strip()}]"
     except Exception as e:
         print(f"[ERROR] describe_image: Failed, error='{str(e)}'")
         return f"[图片内容描述获取失败: {str(e)}]"
