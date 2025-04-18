@@ -7,13 +7,16 @@ from napcat.message_types import MessageSegment
 
 async def fetch_music_data(session: aiohttp.ClientSession, query: str) -> MessageSegment:
     """异步从音乐API获取数据。"""
+    print(f"[Debug] Music Fetch: Querying for '{query}'") # 添加日志
     try:
         encoded_query = urllib.parse.quote(query)
-        # 使用新的 API 地址
         search_url = f"https://sicha.ltd/musicapi/cloudsearch?keywords={encoded_query}&limit=1"
-        async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=5)) as response: # 设置5秒超时
+        print(f"[Debug] Music Fetch: Requesting URL: {search_url}") # 添加日志
+        async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=5)) as response:
+            print(f"[Debug] Music Fetch: Received status {response.status} for query '{query}'") # 添加日志
             response.raise_for_status()
             data = await response.json()
+            print(f"[Debug] Music Fetch: Received data for '{query}': {data}") # 添加日志 (可选，数据可能很大)
 
             song_id = None
             if data.get("code") == 200 and isinstance(data.get("result"), dict) and isinstance(data["result"].get("songs"), list):
@@ -24,21 +27,23 @@ async def fetch_music_data(session: aiohttp.ClientSession, query: str) -> Messag
                         song_id = first_song.get("id")
 
             if song_id:
-                return {"type": "music", "data": {"type": "163", "id": str(song_id)}}
+                result_segment = {"type": "music", "data": {"type": "163", "id": str(song_id)}}
+                print(f"[Debug] Music Fetch: Success for '{query}', returning music segment.") # 添加日志
+                return result_segment
             else:
-                print(f"音乐搜索 API 未找到歌曲或格式错误 ({query}): {data}")
+                print(f"[Debug] Music Fetch: Song ID not found or API format error for '{query}'.") # 添加日志
                 return {"type": "text", "data": {"text": f"抱歉，找不到歌曲：{query}"}}
     except aiohttp.ClientResponseError as e:
-        print(f"请求音乐搜索 API 时发生客户端错误 ({query}): {e.status} {e.message}")
+        print(f"[Error] Music Fetch: Client error for '{query}': {e.status} {e.message}") # 修改为Error级别日志
         return {"type": "text", "data": {"text": f"音乐服务暂时不可用喵 ({query})"}}
     except asyncio.TimeoutError:
-        print(f"请求音乐搜索 API 超时: {query}")
+        print(f"[Error] Music Fetch: Timeout for query '{query}'") # 修改为Error级别日志
         return {"type": "text", "data": {"text": f"音乐搜索超时了 T_T ({query})"}}
     except aiohttp.ClientError as e:
-        print(f"请求音乐搜索 API 失败 ({query}): {e}")
+        print(f"[Error] Music Fetch: Client connection error for '{query}': {e}") # 修改为Error级别日志
         return {"type": "text", "data": {"text": f"音乐搜索失败了喵 T_T ({query})"}}
     except Exception as e:
-        print(f"处理音乐标签时发生未知错误 ({query}): {e}")
+        print(f"[Error] Music Fetch: Unknown error processing query '{query}': {e}") # 修改为Error级别日志
         return {"type": "text", "data": {"text": f"处理音乐请求时出错啦 ({query})"}}
 
 async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] = None) -> List[MessageSegment]:
@@ -50,6 +55,7 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
       - [music:歌曲名] 或 [music:歌曲名-歌手]：自动搜索并发送音乐卡片 (并行处理)
     其余内容作为text消息段。
     """
+    print(f"[Debug] AI Parser: Received raw text: {text}") # 添加日志
     segments_placeholders: List[Optional[MessageSegment]] = [] # 使用Optional来放置占位符
     pattern = re.compile(
         r"(?P<reply>\[reply(?::(?P<reply_id>\d+))?])"
