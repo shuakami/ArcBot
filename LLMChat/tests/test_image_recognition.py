@@ -8,7 +8,7 @@ from config import CONFIG
 # 动态设置 image_ai 配置
 CONFIG["image_ai"] = {
     "api_url": "https://dashscope.aliyuncs.com/api/v1/services/vision/text-image-generation/generation",
-    "token": "sk-89e09d80ab994548bf28fcedc01cd791",
+    "token": "",
     "model": "qwen-vl-plus"
 }
 
