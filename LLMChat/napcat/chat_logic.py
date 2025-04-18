@@ -12,6 +12,7 @@ from utils.whitelist import is_whitelisted
 from napcat.message_sender import IMessageSender
 from napcat.message_types import MessageSegment
 from utils.message_content import parse_group_message_content
+from utils.ai_message_parser import parse_ai_message_to_segments
 
 
 def check_access(sender_id, is_group=False):
@@ -31,47 +32,6 @@ def check_access(sender_id, is_group=False):
     elif mode == "white":
         return is_whitelisted(sender_id, is_group)
     return True
-
-def parse_ai_message_to_segments(text: str, current_msg_id: int = None) -> list[MessageSegment]:
-    """
-    解析AI输出，将[@qq:...]、[CQ:at,qq=...]和[reply]/[reply:id]等结构化标记转为MessageSegment。
-    支持任意位置、任意次数混用。
-    [reply]无ID时自动用当前消息ID，无需AI指定。
-    """
-    segments = []
-    # 统一匹配所有支持的标记：[reply]/[reply:id]、[@qq:id]、[CQ:at,qq=id]
-    pattern = re.compile(r"(\[reply(?::(\d+))?])|(\[@qq:(\d+)])|(\[CQ:at,qq=(\d+)])")
-    last_idx = 0
-    for m in pattern.finditer(text):
-        # 添加标记前的文本段
-        if m.start() > last_idx:
-            seg_text = text[last_idx:m.start()].strip()
-            if seg_text:
-                segments.append({"type": "text", "data": {"text": seg_text}})
-        # 判断匹配到的标记类型并处理
-        if m.group(1):  # 匹配到 [reply] 或 [reply:id]
-            reply_id_str = m.group(2)
-            if reply_id_str:
-                reply_id = int(reply_id_str)
-            elif current_msg_id is not None:
-                reply_id = int(current_msg_id)
-            else:
-                reply_id = None # 无法获取ID，忽略该标记？或抛异常？暂定忽略
-            if reply_id is not None:
-                segments.append({"type": "reply", "data": {"id": reply_id}})
-        elif m.group(3): # 匹配到 [@qq:id]
-            qq = m.group(4)
-            segments.append({"type": "at", "data": {"qq": qq}})
-        elif m.group(5): # 匹配到 [CQ:at,qq=id]
-            qq = m.group(6)
-            segments.append({"type": "at", "data": {"qq": qq}})
-        last_idx = m.end()
-    # 添加最后一个标记后的文本段
-    if last_idx < len(text):
-        seg_text = text[last_idx:].strip()
-        if seg_text:
-            segments.append({"type": "text", "data": {"text": seg_text}})
-    return segments if segments else [{"type": "text", "data": {"text": text}}]
 
 def handle_private_message(msg_dict, sender: IMessageSender):
     """
