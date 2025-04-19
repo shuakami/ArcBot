@@ -92,59 +92,63 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
     """
     处理群聊消息：
       - 记录消息日志
-      - 异步生成回复消息，实现流式发送效果
+      - 异步生成回复，达到流式发送的效果
     """
     try:
-        group_id = str(msg_dict.get("group_id", ""))
-        raw_message = msg_dict.get("raw_message", "")
-        group_prefix = CONFIG["qqbot"].get("group_prefix", "#")
-        # 仅处理以 '#' 开头的消息
-        if not raw_message.startswith(group_prefix):
-            return
-
-        # 解析图片/表情包/文本
-        content = parse_group_message_content(msg_dict)
+        group_id = str(msg_dict["group_id"])
         sender_info = msg_dict["sender"]
         user_id = str(sender_info["user_id"])
-        if CONFIG["debug"]: print(f"收到群聊消息: {group_id} - {user_id} - {sender_info.get('nickname', '')}")
-
+        
         # 检查是否允许处理该消息
-        if not check_access(group_id, True):
+        if not check_access(group_id, is_group=True):
             return
-        if not check_access(user_id):
+            
+        # 解析消息内容
+        user_content = parse_group_message_content(msg_dict)
+        if not user_content.startswith("#"):
             return
-
+            
+        # 去除触发前缀
+        user_content = user_content[1:].strip()
+        if not user_content:
+            return
+            
         username = sender_info.get("nickname", "")
         message_id = str(msg_dict.get("message_id", ""))
         timestamp = msg_dict.get("time", int(time.time()))
-
-        # 记录群聊消息日志
-        log_message(user_id, username, message_id, raw_message, timestamp, group_id)
-        print(f"\n群: {group_id} | Q: {username} [{user_id}] \n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {raw_message}")
-
-        # 将用户信息附加到消息中
-        user_content = f"[用户{user_id}-{username}] {content}"
+        
         # 格式化时间戳前缀
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
         user_content_with_time = f"[时间:{time_str}] {user_content}"
+        
+        # 记录消息日志
+        log_message(user_id, username, message_id, user_content_with_time, timestamp, group_id=group_id)
+        print(f"\nQ: {username}[{user_id}] in 群[{group_id}]\n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {user_content_with_time}")
 
         # 异步处理回复消息，实现流式发送效果
-        def process_and_send():
+        async def process_and_send():
             for segment in process_conversation(group_id, user_content_with_time, chat_type="group"):
                 try:
-                    # 使用 asyncio.run() 同步执行异步函数
-                    msg_segments = asyncio.run(parse_ai_message_to_segments(segment, message_id))
-                except RuntimeError as e:
-                    print(f"在线程中运行 asyncio.run(parse_ai_message_to_segments) 出错: {e}. 可能事件循环已在运行。")
+                    msg_segments = await parse_ai_message_to_segments(
+                        segment, 
+                        message_id,
+                        chat_id=group_id,
+                        chat_type="group"
+                    )
+                    sender.send_group_msg(int(group_id), msg_segments)
+                    await asyncio.sleep(random.uniform(1.0, 3.0))
+                except Exception as e:
+                    print(f"处理群消息段时出错: {e}")
                     continue
-                except Exception as parse_e:
-                    print(f"解析 AI 消息段时出错: {parse_e}")
-                    continue # 解析失败则跳过此段
-                
-                sender.send_group_msg(int(group_id), msg_segments)
-                time.sleep(random.uniform(1.0, 3.0))
 
-        threading.Thread(target=process_and_send, daemon=True).start()
+        # 在新的事件循环中运行异步函数
+        def run_async():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(process_and_send())
+            loop.close()
+
+        threading.Thread(target=run_async, daemon=True).start()
 
     except Exception as e:
         print("处理群聊消息异常:", e)
