@@ -8,59 +8,7 @@ from napcat.message_types import MessageSegment
 from utils.notebook import notebook
 from utils.reminder import reminder_manager
 from utils.files import load_conversation_history
-
-async def fetch_music_data(session: aiohttp.ClientSession, query: str, max_retries: int = 1) -> MessageSegment:
-    """异步从音乐API获取数据，支持自动重试。"""
-    retries = 0
-    last_error = None
-    
-    while retries <= max_retries:
-        try:
-            print(f"[Debug] Music Fetch: Querying for '{query}' (attempt {retries + 1}/{max_retries + 1})") 
-            encoded_query = urllib.parse.quote(query)
-            search_url = f"https://sicha.ltd/musicapi/cloudsearch?keywords={encoded_query}&limit=1"
-            print(f"[Debug] Music Fetch: Requesting URL: {search_url}")
-            
-            async with session.get(search_url, timeout=aiohttp.ClientTimeout(total=5)) as response:
-                print(f"[Debug] Music Fetch: Received status {response.status} for query '{query}'")
-                response.raise_for_status()
-                data = await response.json()
-                print(f"[Debug] Music Fetch: Received data for '{query}': {data}")
-
-                song_id = None
-                if data.get("code") == 200 and isinstance(data.get("result"), dict) and isinstance(data["result"].get("songs"), list):
-                    songs = data["result"]["songs"]
-                    if songs:
-                        first_song = songs[0]
-                        if isinstance(first_song, dict):
-                            song_id = first_song.get("id")
-
-                if song_id:
-                    result_segment = {"type": "music", "data": {"type": "163", "id": str(song_id)}}
-                    print(f"[Debug] Music Fetch: Success for '{query}', returning music segment.")
-                    return result_segment
-                else:
-                    print(f"[Debug] Music Fetch: Song ID not found or API format error for '{query}'.")
-                    return {"type": "text", "data": {"text": f"抱歉，找不到歌曲：{query} 喵。再试一次呗~"}}
-                    
-        except (aiohttp.ClientResponseError, asyncio.TimeoutError, aiohttp.ClientError) as e:
-            last_error = e
-            retries += 1
-            if retries <= max_retries:
-                print(f"[Warning] Music Fetch: Error on attempt {retries}/{max_retries + 1} for '{query}': {e}")
-                await asyncio.sleep(1)  # 重试前等待1秒
-                continue
-            else:
-                print(f"[Error] Music Fetch: All retry attempts failed for '{query}': {e}")
-                if isinstance(e, aiohttp.ClientResponseError):
-                    return {"type": "text", "data": {"text": f"音乐服务暂时不可用喵 ({query})"}}
-                elif isinstance(e, asyncio.TimeoutError):
-                    return {"type": "text", "data": {"text": f"音乐搜索超时了 T_T ({query})"}}
-                else:
-                    return {"type": "text", "data": {"text": f"音乐搜索失败了喵 T_T ({query})"}}
-        except Exception as e:
-            print(f"[Error] Music Fetch: Unknown error processing query '{query}': {e}")
-            return {"type": "text", "data": {"text": f"处理音乐请求时出错啦 ({query})"}}
+from utils.music_handler import fetch_music_data
 
 async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] = None, chat_id: Optional[str] = None, chat_type: str = "private") -> List[MessageSegment]:
     """
