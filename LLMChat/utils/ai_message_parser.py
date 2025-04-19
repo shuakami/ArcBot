@@ -2,9 +2,11 @@ import re
 import asyncio
 import aiohttp
 import urllib.parse
+import time
 from typing import List, Optional, Dict, Any
 from napcat.message_types import MessageSegment
 from utils.notebook import notebook
+from utils.reminder import reminder_manager
 from utils.files import load_conversation_history
 
 async def fetch_music_data(session: aiohttp.ClientSession, query: str, max_retries: int = 1) -> MessageSegment:
@@ -69,6 +71,8 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
       - [music:歌曲名] 或 [music:歌曲名-歌手]：自动搜索并发送音乐卡片 (并行处理)
       - [note:内容] 或 [note:内容:context]：静默记录笔记（不会发送任何消息）
         如果带有:context参数，会自动保存最近5条对话作为上下文
+      - [reminder:时间戳:原因] 或 [reminder:时间戳:原因:context]：创建定时提醒
+        如果带有:context参数，会自动保存最近5条对话作为上下文
     其余内容作为text消息段。
     """
     print(f"[Debug] AI Parser: Received raw text: {text}")
@@ -84,6 +88,7 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
         r"|(?P<at2>\[CQ:at,qq=(?P<at_qq2>\d+)])"
         r"|(?P<music>\[music:(?P<music_query>[^\]]+)])"
         r"|(?P<note>\[note:(?P<note_content>[^:\]]+)(?::(?P<note_context>context))?\])"
+        r"|(?P<reminder>\[reminder:(?P<reminder_time>\d+):(?P<reminder_reason>[^:\]]+)(?::(?P<reminder_context>context))?\])"
     )
 
     def get_recent_context(chat_id: str, chat_type: str) -> Optional[str]:
@@ -112,8 +117,8 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
             print(f"获取对话上下文失败: {e}")
             return None
 
-    # 预处理：移除所有note标记
-    cleaned_text = pattern.sub(lambda m: '' if m.group('note') else m.group(0), text)
+    # 预处理：移除所有note标记和reminder标记
+    cleaned_text = pattern.sub(lambda m: '' if m.group('note') or m.group('reminder') else m.group(0), text)
     
     # 检查是否需要添加reply
     should_reply = False
@@ -174,6 +179,15 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
                         context = get_recent_context(chat_id, chat_type)
                     notebook.add_note(note_content, context)
                     print(f"[Debug] Note added: {note_content}")
+            elif m.group("reminder"):
+                trigger_time = int(m.group("reminder_time"))
+                reason = m.group("reminder_reason").strip()
+                if trigger_time and reason and chat_id:
+                    context = None
+                    if m.group("reminder_context") == "context":
+                        context = get_recent_context(chat_id, chat_type)
+                    if reminder_manager.add_reminder(trigger_time, reason, chat_id, chat_type, context):
+                        print(f"[Debug] Reminder added: {reason} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(trigger_time))}")
 
         if music_tasks:
             music_results = await asyncio.gather(*music_tasks, return_exceptions=True)
