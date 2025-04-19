@@ -3,6 +3,7 @@ import threading
 import random
 import re
 import asyncio
+from typing import List
 
 from config import CONFIG
 from llm import process_conversation
@@ -62,14 +63,26 @@ def handle_private_message(msg_dict, sender: IMessageSender):
         print(f"\nQ: {username}[{user_id}] \n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {content_with_time}")
 
         # 异步处理回复消息，实现流式发送效果
-        def process_and_send():
+        async def process_and_send():
             for segment in process_conversation(user_id, content_with_time, chat_type="private"):
                 sender.set_input_status(user_id)
                 time.sleep(random.uniform(1.0, 3.0))
-                msg_segments = parse_ai_message_to_segments(segment, message_id)
+                msg_segments = await parse_ai_message_to_segments(
+                    segment, 
+                    message_id,
+                    chat_id=user_id,
+                    chat_type="private"
+                )
                 sender.send_private_msg(int(user_id), msg_segments)
 
-        threading.Thread(target=process_and_send, daemon=True).start()
+        # 在新的事件循环中运行异步函数
+        def run_async():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(process_and_send())
+            loop.close()
+
+        threading.Thread(target=run_async, daemon=True).start()
 
     except Exception as e:
         print("处理私聊消息异常:", e)
