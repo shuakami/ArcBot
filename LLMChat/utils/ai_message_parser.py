@@ -72,6 +72,11 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
     其余内容作为text消息段。
     """
     print(f"[Debug] AI Parser: Received raw text: {text}")
+    
+    # 如果消息只包含[reply]标记，直接返回空列表
+    if text.strip() == "[reply]":
+        return []
+        
     segments_placeholders: List[Optional[MessageSegment]] = []
     pattern = re.compile(
         r"(?P<reply>\[reply(?::(?P<reply_id>\d+))?])"
@@ -107,29 +112,35 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
             print(f"获取对话上下文失败: {e}")
             return None
 
+    # 预处理：移除所有note标记
+    cleaned_text = pattern.sub(lambda m: '' if m.group('note') else m.group(0), text)
+    
+    # 检查是否需要添加reply
+    should_reply = False
+    reply_id = None
+    
+    # 查找第一个reply标记
+    reply_match = pattern.search(cleaned_text)
+    if reply_match and reply_match.group("reply"):
+        should_reply = True
+        reply_id = reply_match.group("reply_id")
+        # 移除reply标记
+        cleaned_text = pattern.sub(lambda m: '' if m.group('reply') else m.group(0), cleaned_text)
+    
+    # 重新获取匹配，这次是在清理后的文本上
+    matches = list(pattern.finditer(cleaned_text))
     last_idx = 0
-    matches = list(pattern.finditer(text))
     music_tasks = []
     music_indices = {}
 
     async with aiohttp.ClientSession() as session:
         for i, m in enumerate(matches):
             if m.start() > last_idx:
-                seg_text = text[last_idx:m.start()].strip()
+                seg_text = cleaned_text[last_idx:m.start()].strip()
                 if seg_text:
                     segments_placeholders.append({"type": "text", "data": {"text": seg_text}})
 
-            if m.group("reply"):
-                reply_id = m.group("reply_id")
-                segment: MessageSegment = {"type": "reply", "data": {}}
-                if reply_id:
-                    segment["data"]["id"] = int(reply_id)
-                elif current_msg_id is not None:
-                    segment["data"]["id"] = int(current_msg_id)
-                else:
-                    continue
-                segments_placeholders.append(segment)
-            elif m.group("at1"):
+            if m.group("at1"):
                 qq = m.group("at_qq1")
                 segments_placeholders.append({"type": "at", "data": {"qq": qq}})
             elif m.group("at2"):
@@ -145,20 +156,24 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
                     music_indices[task_index] = placeholder_index
                 else:
                     segments_placeholders.append({"type": "text", "data": {"text": "[music:] 标签内容为空"}})
-            elif m.group("note"):
+
+            last_idx = m.end()
+
+        if last_idx < len(cleaned_text):
+            seg_text = cleaned_text[last_idx:].strip()
+            if seg_text:
+                segments_placeholders.append({"type": "text", "data": {"text": seg_text}})
+
+        # 处理note标记（静默）
+        for m in pattern.finditer(text):
+            if m.group("note"):
                 note_content = m.group("note_content").strip()
                 if note_content:
                     context = None
                     if m.group("note_context") == "context" and chat_id:
                         context = get_recent_context(chat_id, chat_type)
                     notebook.add_note(note_content, context)
-
-            last_idx = m.end()
-
-        if last_idx < len(text):
-            seg_text = text[last_idx:].strip()
-            if seg_text:
-                segments_placeholders.append({"type": "text", "data": {"text": seg_text}})
+                    print(f"[Debug] Note added: {note_content}")
 
         if music_tasks:
             music_results = await asyncio.gather(*music_tasks, return_exceptions=True)
@@ -171,8 +186,18 @@ async def parse_ai_message_to_segments(text: str, current_msg_id: Optional[int] 
                     segments_placeholders[placeholder_index] = result
 
     final_segments: List[MessageSegment] = [seg for seg in segments_placeholders if seg is not None]
-
+    
+    # 如果有实际内容且需要回复，添加reply segment
+    if final_segments and should_reply:
+        reply_segment: MessageSegment = {"type": "reply", "data": {}}
+        if reply_id:
+            reply_segment["data"]["id"] = int(reply_id)
+        elif current_msg_id is not None:
+            reply_segment["data"]["id"] = int(current_msg_id)
+        final_segments.insert(0, reply_segment)
+    
+    # 如果没有任何内容，返回空列表
     if not final_segments:
-        final_segments.append({"type": "text", "data": {"text": ""}})
+        return []
 
     return final_segments
