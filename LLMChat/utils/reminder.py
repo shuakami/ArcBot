@@ -27,32 +27,60 @@ class ReminderManager:
     
     def _check_reminders(self):
         """检查并处理到期的提醒任务"""
+        last_check_time = int(time.time())
+        
         while True:
             try:
-                due_reminders = self.get_due_reminders()
-                for reminder in due_reminders:
-                    # 构建系统提示消息
-                    system_message = {
-                        "role": "system",
-                        "content": f"现在是 {time.strftime('%Y-%m-%d %H:%M:%S')}，系统自动触发了你之前设置的提醒。\n"
-                                  f"你自己设计的提醒原因：{reminder['reason']}\n"
-                                  + (f"相关上下文：\n{reminder['context']}" if reminder.get('context') else "")
-                    }
+                current_time = int(time.time())
+                
+                # 如果距离上次检查超过1分钟，获取这段时间内所有到期的提醒
+                if current_time - last_check_time >= 60:
+                    # 获取从上次检查到现在这段时间内所有到期的提醒
+                    due_reminders = [r for r in self.reminders 
+                                   if last_check_time < r["trigger_time"] <= current_time]
                     
-                    # 调用对话处理函数发送提醒
-                    if self.process_conversation:
-                        for segment in self.process_conversation(
-                            reminder['chat_id'],
-                            system_message['content'],
-                            chat_type=reminder['chat_type']
-                        ):
-                            pass  # 等待所有消息段处理完成
+                    if due_reminders:
+                        # 更新提醒列表，移除已触发的提醒
+                        self.reminders = [r for r in self.reminders if r not in due_reminders]
+                        self._save_reminders()
+                        
+                        # 处理到期的提醒
+                        for reminder in due_reminders:
+                            try:
+                                # 构建系统提示消息
+                                system_message = {
+                                    "role": "system",
+                                    "content": f"现在是 {time.strftime('%Y-%m-%d %H:%M:%S')}，系统自动触发了你之前设置的提醒。\n"
+                                              f"你自己设计的提醒原因：{reminder['reason']}\n"
+                                              + (f"相关上下文：\n{reminder['context']}" if reminder.get('context') else "")
+                                }
+                                
+                                # 调用对话处理函数发送提醒
+                                if self.process_conversation:
+                                    for segment in self.process_conversation(
+                                        reminder['chat_id'],
+                                        system_message['content'],
+                                        chat_type=reminder['chat_type']
+                                    ):
+                                        pass  # 等待所有消息段处理完成
+                            except Exception as e:
+                                print(f"处理单个提醒任务时出错: {e}")
+                                continue
                     
+                    # 更新上次检查时间
+                    last_check_time = current_time
+                
+                # 计算到下一分钟的等待时间
+                next_minute = (current_time // 60 + 1) * 60
+                wait_time = max(0.1, next_minute - time.time())  # 至少等待0.1秒，避免CPU空转
+                time.sleep(wait_time)
+                
             except Exception as e:
-                print(f"处理提醒任务时出错: {e}")
-            
-            # 每分钟检查一次
-            time.sleep(60)
+                print(f"提醒检查循环出错: {e}")
+                # 发生错误时，等待1秒后继续
+                time.sleep(1)
+                # 重置上次检查时间，避免遗漏
+                last_check_time = int(time.time()) - 65  # 稍微回退一点，确保不会遗漏
     
     def _ensure_reminder_file(self):
         """确保提醒文件和目录存在"""
