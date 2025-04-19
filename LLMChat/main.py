@@ -1,5 +1,8 @@
 from logger import init_db
 from napcat.post import init_ws
+from utils.reminder import reminder_manager
+from llm import process_conversation
+import time
 
 def main():
     # 初始化消息记录数据库
@@ -8,8 +11,11 @@ def main():
     # 初始化 WebSocket 连接（注意：get.py 中会自动处理消息接收）
     print("🚀 初始化 WebSocket 连接...")
     init_ws()
-    # 主线程休眠，保持程序运行
-    import time
+    
+    # 初始化提醒管理器
+    print("🚀 初始化提醒管理器...")
+    reminder_manager.init_process_conversation(process_conversation)
+    
     print("✅ 初始化完成，主程序运行中...")
     while True:
         time.sleep(1)
