@@ -4,6 +4,7 @@ import random
 import re
 import asyncio
 from typing import List
+from collections import deque
 
 from config import CONFIG
 from llm import process_conversation
@@ -17,7 +18,14 @@ from utils.message_content import parse_group_message_content
 from utils.ai_message_parser import parse_ai_message_to_segments
 from utils.group_activity import group_activity_manager
 from . import post # 导入 post 模块以调用 send_poke
+from utils.dragon_handler import update_message_history, handle_dragon_logic
 
+# --- 接龙功能相关 ---
+# 存储每个群组最近消息历史 (group_id -> deque of (user_id, text_content))
+# deque 的 maxlen 可以根据需要调整，例如 5 条
+#group_message_history = {}
+#DRAGON_HISTORY_LENGTH = 5 # 存储最近5条消息用于检测
+# --------------------
 
 def check_access(sender_id, is_group=False):
     """
@@ -89,7 +97,6 @@ def handle_private_message(msg_dict, sender: IMessageSender):
     except Exception as e:
         print("处理私聊消息异常:", e)
 
-
 async def handle_group_message(msg_dict, sender: IMessageSender):
     """
     处理群聊消息：
@@ -105,6 +112,17 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
         self_id = str(msg_dict.get('self_id'))
         message_segments = msg_dict.get("message", [])
         
+        # 提取纯文本内容
+        current_message_text = extract_text_from_message(msg_dict).strip()
+
+        # 如果是机器人自己发的消息，或者纯文本内容为空，则跳过接龙检测和大部分处理
+        if user_id == self_id or not current_message_text:
+            print(f"[DEBUG] 机器人自身消息或空消息，跳过大部分处理")
+            return
+
+        # 更新消息历史 (调用新模块函数)
+        update_message_history(group_id, user_id, current_message_text)
+
         print(f"[DEBUG] 开始处理群 {group_id} 的消息")
         
         # 更新群活跃度（无论是否是命令消息）
@@ -115,6 +133,12 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
             print(f"[DEBUG] 群 {group_id} 在黑名单中或不在白名单中，跳过处理")
             return
             
+        # 检查并处理接龙
+        dragon_handled = await handle_dragon_logic(group_id, self_id, sender)
+        if dragon_handled:
+            print(f"[DEBUG] 接龙已被 handle_dragon_logic 处理，结束当前消息流程。")
+            return # 如果接龙被处理了，则不再继续下面的 @ 或 前缀 逻辑
+
         # 检查是否 @机器人
         is_mentioned = any(
             seg.get("type") == "at" and seg.get("data", {}).get("qq") == self_id
@@ -134,7 +158,7 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
             print(f"[DEBUG] 消息既不以 {reply_prefix} 开头，也没有 @机器人 ({self_id})，跳过处理")
             return
             
-        # 如果是以触发前缀开头，则去除前缀
+        # 如果是以触发前缀开头（且不是AI打乱请求），则去除前缀
         if has_prefix:
             user_content = user_content[len(reply_prefix):].strip()
         
@@ -146,23 +170,24 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
         message_id = str(msg_dict.get("message_id", ""))
         timestamp = msg_dict.get("time", int(time.time()))
         
-        # 格式化时间戳前缀
+        # 格式化用户输入内容
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
-        user_content_with_time = f"[用户:{username}({user_id})] [群:{group_id}] [时间:{time_str}] {user_content}"
-        
-        # 记录消息日志
-        log_message(user_id, username, message_id, user_content_with_time, timestamp, group_id=group_id)
-        print(f"\nQ: {username}[{user_id}] in 群[{group_id}]\n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {user_content_with_time}")
+        ai_input_content = f"[用户:{username}({user_id})] [群:{group_id}] [时间:{time_str}] {user_content}"
+        # 记录普通消息日志
+        log_message(user_id, username, message_id, ai_input_content, timestamp, group_id=group_id)
+        print(f"\nQ: {username}[{user_id}] in 群[{group_id}]\n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {ai_input_content}")
 
-        print(f"[DEBUG] 开始调用AI处理消息")
+        print(f"[DEBUG] 开始调用AI处理消息 (输入: {ai_input_content[:100]}...)")
+        
         # 异步处理回复消息，实现流式发送效果
         try:
-            for segment_text in process_conversation(group_id, user_content_with_time, chat_type="group"):
+            # 使用 ai_input_content 作为 AI 输入
+            for segment_text in process_conversation(group_id, ai_input_content, chat_type="group"):
                 try:
                     print(f"[DEBUG] 收到AI回复片段: {segment_text}")
                     msg_segments = await parse_ai_message_to_segments(
                         segment_text,
-                        message_id,
+                        message_id, # AI打乱逻辑已移走，直接用原ID
                         chat_id=group_id,
                         chat_type="group"
                     )
