@@ -3,6 +3,7 @@ from config import CONFIG
 from napcat.chat_logic import handle_group_message, handle_private_message
 from napcat.command_handler import process_command
 from napcat.message_sender import WebSocketSender
+from utils.emoji_storage import emoji_storage
 import asyncio
 
 def handle_incoming_message(message):
@@ -12,6 +13,9 @@ def handle_incoming_message(message):
             return
         
         if CONFIG["debug"]: print("收到消息:", msg)
+        
+        # 检查并存储表情包
+        emoji_storage.store_emoji(msg)
         
         sender = WebSocketSender()
         # 优先处理命令类消息

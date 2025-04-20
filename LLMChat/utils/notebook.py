@@ -34,12 +34,12 @@ class AINotebook:
         except Exception as e:
             print(f"保存笔记本出错: {e}")
     
-    def add_note(self, content: str, context: Optional[str] = None) -> bool:
+    def add_note(self, content: str, context: Optional[str] = None) -> int:
         """
         添加新笔记
         :param content: 笔记内容
         :param context: 可选的上下文信息
-        :return: 是否添加成功
+        :return: 新笔记的ID
         """
         try:
             note = {
@@ -50,9 +50,27 @@ class AINotebook:
             }
             self.notes.append(note)
             self._save_notes()
-            return True
+            return note["id"]
         except Exception as e:
             print(f"添加笔记失败: {e}")
+            return -1
+    
+    def delete_note(self, note_id: int) -> bool:
+        """
+        删除指定ID的笔记
+        :param note_id: 笔记ID
+        :return: 是否删除成功
+        """
+        try:
+            original_length = len(self.notes)
+            self.notes = [note for note in self.notes if note["id"] != note_id]
+            
+            if len(self.notes) < original_length:
+                self._save_notes()
+                return True
+            return False
+        except Exception as e:
+            print(f"删除笔记失败: {e}")
             return False
     
     def get_all_notes(self) -> List[Dict]:

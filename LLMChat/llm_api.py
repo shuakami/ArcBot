@@ -11,6 +11,8 @@ def get_ai_response(conversation):
     返回:
       通过 yield 分段返回 AI 回复内容；如果遇到错误则抛出异常。
     """
+    print(f"[DEBUG] 准备调用AI接口，对话上下文包含 {len(conversation)} 条消息")
+    
     headers = {
         "Authorization": f"Bearer {CONFIG['ai']['token']}",
         "Content-Type": "application/json"
@@ -20,10 +22,16 @@ def get_ai_response(conversation):
         "messages": conversation,
         "stream": True
     }
+    
+    print(f"[DEBUG] 发送请求到 {CONFIG['ai']['api_url']}")
     response = requests.post(CONFIG["ai"]["api_url"], headers=headers, json=payload, stream=True)
+    
     if response.status_code != 200:
-        raise Exception(f"AI接口调用失败, 状态码：{response.status_code}, {response.text}")
+        error_msg = f"AI接口调用失败, 状态码：{response.status_code}, {response.text}"
+        print(f"[ERROR] {error_msg}")
+        raise Exception(error_msg)
 
+    print("[DEBUG] 开始接收流式响应")
     buffer = ""
     for line in response.iter_lines(decode_unicode=True):
         line = line.strip() # 先去除两端空白
@@ -34,16 +42,18 @@ def get_ai_response(conversation):
         if line.startswith("data:"):
             line_data = line[len("data:"):].strip()
             if line_data == "[DONE]":
+                print("[DEBUG] 收到流式响应结束标记")
                 break # 正常结束
             try:
                 data = json.loads(line_data)
-                if CONFIG["debug"]: print(f"[DEBUG] Stream Data: {repr(line_data)}")
+                if CONFIG["debug"]: 
+                    print(f"[DEBUG] Stream Data: {repr(line_data)}")
             except json.JSONDecodeError as e:
                 # 仅记录 JSON 解析错误，忽略非 JSON 行
-                print(f"解析流式 JSON 响应出错: {e}, line内容: {repr(line_data)}")
+                print(f"[ERROR] 解析流式 JSON 响应出错: {e}, line内容: {repr(line_data)}")
                 continue
             except Exception as e:
-                print(f"处理流式响应时发生未知错误: {e}, line内容: {repr(line_data)}")
+                print(f"[ERROR] 处理流式响应时发生未知错误: {e}, line内容: {repr(line_data)}")
                 continue
             
             # 提取内容
@@ -58,13 +68,19 @@ def get_ai_response(conversation):
                         part, buffer = buffer.split("\n", 1)
                     part = part.strip()
                     if part:
+                        print(f"[DEBUG] 发送回复片段: {part[:50]}...") # 只打印前50个字符
                         yield part
         elif line == "[DONE]":
-             break
+            print("[DEBUG] 收到[DONE]标记")
+            break
 
     # 输出剩余内容
     if buffer.strip():
-        yield buffer.strip()
+        final_part = buffer.strip()
+        print(f"[DEBUG] 发送最后的回复片段: {final_part[:50]}...") # 只打印前50个字符
+        yield final_part
+    
+    print("[DEBUG] AI接口调用完成")
 
 def get_ai_response_with_image(conversation, image=None, image_type="url"):
     """
