@@ -2,9 +2,11 @@ import os
 import json
 from utils.notebook import notebook
 from utils.emoji_storage import emoji_storage
+import utils.role_manager as role_manager
 
 PRIVATE_DIR = os.path.join("data", "conversation", "private")
 GROUP_DIR = os.path.join("data", "conversation", "group")
+DEFAULT_ROLE_FILENAME = "default.json"
 os.makedirs(PRIVATE_DIR, exist_ok=True)
 os.makedirs(GROUP_DIR, exist_ok=True)
 
@@ -29,11 +31,26 @@ def get_latest_system_content() -> str:
         print("读取系统提示或笔记失败:", e)
         return ""
 
-def get_history_file(id_str, chat_type="private"):
-    if chat_type == "private":
-        return os.path.join(PRIVATE_DIR, f"private_{id_str}.json")
+def get_history_file(id_str: str, chat_type="private") -> str:
+    """根据聊天ID、类型和当前激活的角色获取历史文件路径"""
+    base_dir = GROUP_DIR if chat_type == "group" else PRIVATE_DIR
+    # 获取当前激活的角色名
+    active_role = role_manager.get_active_role(id_str, chat_type)
+    
+    if active_role:
+        # 如果有激活角色，使用 chat_id/角色名.json 结构
+        chat_dir = os.path.join(base_dir, id_str)
+        # 清理角色名，避免作为文件名时包含非法字符
+        safe_role_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in active_role)
+        history_file = os.path.join(chat_dir, f"{safe_role_name}.json")
     else:
-        return os.path.join(GROUP_DIR, f"group_{id_str}.json")
+        # 默认角色，使用 chat_id/default.json 结构
+        chat_dir = os.path.join(base_dir, id_str)
+        history_file = os.path.join(chat_dir, DEFAULT_ROLE_FILENAME)
+        
+    # 确保目录存在
+    os.makedirs(os.path.dirname(history_file), exist_ok=True)
+    return history_file
 
 def load_conversation_history(id_str, chat_type="private"):
     """
