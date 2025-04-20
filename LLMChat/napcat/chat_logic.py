@@ -101,6 +101,10 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
         sender_info = msg_dict["sender"]
         user_id = str(sender_info["user_id"])
         
+        # 获取机器人自身ID 和 消息段
+        self_id = str(msg_dict.get('self_id'))
+        message_segments = msg_dict.get("message", [])
+        
         print(f"[DEBUG] 开始处理群 {group_id} 的消息")
         
         # 更新群活跃度（无论是否是命令消息）
@@ -111,19 +115,31 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
             print(f"[DEBUG] 群 {group_id} 在黑名单中或不在白名单中，跳过处理")
             return
             
+        # 检查是否 @机器人
+        is_mentioned = any(
+            seg.get("type") == "at" and seg.get("data", {}).get("qq") == self_id
+            for seg in message_segments
+        )
+        
         # 解析消息内容
         user_content = parse_group_message_content(msg_dict)
         print(f"[DEBUG] 解析后的消息内容: {user_content}")
         
+        # 检查是否以前缀开头
         reply_prefix = CONFIG["qqbot"].get("group_prefix", "#")
-        if not user_content.startswith(reply_prefix):
-            print(f"[DEBUG] 消息不以{reply_prefix}开头，跳过处理")
+        has_prefix = user_content.startswith(reply_prefix)
+        
+        # 如果既没有 @机器人，也没有以前缀开头，则跳过
+        if not is_mentioned and not has_prefix:
+            print(f"[DEBUG] 消息既不以 {reply_prefix} 开头，也没有 @机器人 ({self_id})，跳过处理")
             return
             
-        # 去除触发前缀
-        user_content = user_content[len(reply_prefix):].strip()
+        # 如果是以触发前缀开头，则去除前缀
+        if has_prefix:
+            user_content = user_content[len(reply_prefix):].strip()
+        
         if not user_content:
-            print(f"[DEBUG] 去除{reply_prefix}后消息为空，跳过处理")
+            print(f"[DEBUG] 去除前缀或处理 @ 消息后内容为空，跳过处理")
             return
             
         username = sender_info.get("nickname", "")
