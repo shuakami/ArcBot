@@ -1,6 +1,6 @@
 from logger import init_db
 from napcat.post import init_ws
-from utils.reminder import reminder_manager
+from utils.group_activity import group_activity_manager
 from llm import process_conversation
 import time
 
@@ -12,9 +12,9 @@ def main():
     print("🚀 初始化 WebSocket 连接...")
     init_ws()
     
-    # 初始化提醒管理器
-    print("🚀 初始化提醒管理器...")
-    reminder_manager.init_process_conversation(process_conversation)
+    # 初始化群活跃度管理器
+    print("🚀 初始化群活跃度管理器...")
+    group_activity_manager.init_process_conversation(process_conversation)
     
     print("✅ 初始化完成，主程序运行中...")
     while True:

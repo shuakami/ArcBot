@@ -1,6 +1,7 @@
 import os
 import json
 from utils.notebook import notebook
+from utils.emoji_storage import emoji_storage
 
 PRIVATE_DIR = os.path.join("data", "conversation", "private")
 GROUP_DIR = os.path.join("data", "conversation", "group")
@@ -17,6 +18,11 @@ def get_latest_system_content() -> str:
         notes_context = notebook.get_notes_as_context()
         if notes_context:
             system_prompt = f"{system_prompt}\n\n{notes_context}"
+            
+        # 添加表情包提示
+        emoji_prompt = emoji_storage.get_emoji_system_prompt()
+        if emoji_prompt:
+            system_prompt = f"{system_prompt}{emoji_prompt}"
             
         return system_prompt
     except Exception as e:

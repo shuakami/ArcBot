@@ -15,6 +15,8 @@ from napcat.message_sender import IMessageSender
 from napcat.message_types import MessageSegment
 from utils.message_content import parse_group_message_content
 from utils.ai_message_parser import parse_ai_message_to_segments
+from utils.group_activity import group_activity_manager
+from . import post # 导入 post 模块以调用 send_poke
 
 
 def check_access(sender_id, is_group=False):
@@ -56,7 +58,7 @@ def handle_private_message(msg_dict, sender: IMessageSender):
         timestamp = msg_dict.get("time", int(time.time()))
         # 格式化时间戳前缀
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
-        content_with_time = f"[时间:{time_str}] {content}"
+        content_with_time = f"[用户:{username}(QQ号：{user_id})] [时间:{time_str}] {content}"
 
         # 记录消息日志
         log_message(user_id, username, message_id, content_with_time, timestamp)
@@ -99,18 +101,29 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
         sender_info = msg_dict["sender"]
         user_id = str(sender_info["user_id"])
         
+        print(f"[DEBUG] 开始处理群 {group_id} 的消息")
+        
+        # 更新群活跃度（无论是否是命令消息）
+        group_activity_manager.update_group_activity(group_id)
+        
         # 检查是否允许处理该消息
         if not check_access(group_id, is_group=True):
+            print(f"[DEBUG] 群 {group_id} 在黑名单中或不在白名单中，跳过处理")
             return
             
         # 解析消息内容
         user_content = parse_group_message_content(msg_dict)
-        if not user_content.startswith("#"):
+        print(f"[DEBUG] 解析后的消息内容: {user_content}")
+        
+        reply_prefix = CONFIG["qqbot"].get("group_prefix", "#")
+        if not user_content.startswith(reply_prefix):
+            print(f"[DEBUG] 消息不以{reply_prefix}开头，跳过处理")
             return
             
         # 去除触发前缀
-        user_content = user_content[1:].strip()
+        user_content = user_content[len(reply_prefix):].strip()
         if not user_content:
+            print(f"[DEBUG] 去除{reply_prefix}后消息为空，跳过处理")
             return
             
         username = sender_info.get("nickname", "")
@@ -119,36 +132,61 @@ async def handle_group_message(msg_dict, sender: IMessageSender):
         
         # 格式化时间戳前缀
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
-        user_content_with_time = f"[时间:{time_str}] {user_content}"
+        user_content_with_time = f"[用户:{username}({user_id})] [群:{group_id}] [时间:{time_str}] {user_content}"
         
         # 记录消息日志
         log_message(user_id, username, message_id, user_content_with_time, timestamp, group_id=group_id)
         print(f"\nQ: {username}[{user_id}] in 群[{group_id}]\n消息Id: {message_id} | 时间戳: {timestamp}\n内容: {user_content_with_time}")
 
+        print(f"[DEBUG] 开始调用AI处理消息")
         # 异步处理回复消息，实现流式发送效果
-        async def process_and_send():
-            for segment in process_conversation(group_id, user_content_with_time, chat_type="group"):
+        try:
+            for segment_text in process_conversation(group_id, user_content_with_time, chat_type="group"):
                 try:
+                    print(f"[DEBUG] 收到AI回复片段: {segment_text}")
                     msg_segments = await parse_ai_message_to_segments(
-                        segment, 
+                        segment_text,
                         message_id,
                         chat_id=group_id,
                         chat_type="group"
                     )
-                    sender.send_group_msg(int(group_id), msg_segments)
-                    await asyncio.sleep(random.uniform(1.0, 3.0))
+
+                    # 遍历解析出的消息段，分离戳一戳和其他段
+                    non_poke_segments = []
+                    poke_actions = []
+                    for seg in msg_segments:
+                        if seg["type"] == "poke":
+                            poke_user_id = seg["data"]["qq"]
+                            poke_actions.append((group_id, poke_user_id))
+                        else:
+                            non_poke_segments.append(seg)
+
+                    # 立即执行所有戳一戳动作
+                    for poke_group_id, poke_user_id in poke_actions:
+                        try:
+                            post.send_poke(poke_group_id, poke_user_id)
+                        except Exception as poke_err:
+                            print(f"[ERROR] 发送戳一戳失败: {poke_err}")
+
+                    # 如果有其他消息段，则发送它们
+                    if non_poke_segments:
+                        print(f"[DEBUG] 发送非戳一戳消息片段到群 {group_id}")
+                        sender.send_group_msg(int(group_id), non_poke_segments)
+                        await asyncio.sleep(random.uniform(1.0, 3.0)) # 模拟打字延迟
+
                 except Exception as e:
-                    print(f"处理群消息段时出错: {e}")
+                    print(f"[ERROR] 处理群消息段时出错: {e}")
                     continue
 
-        # 在新的事件循环中运行异步函数
-        def run_async():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(process_and_send())
-            loop.close()
-
-        threading.Thread(target=run_async, daemon=True).start()
+        except Exception as e:
+            print(f"[ERROR] AI处理消息时出错: {e}")
+            error_msg = {"type": "text", "data": {"text": f"处理消息时出错: {str(e)}"}}
+            sender.send_group_msg(int(group_id), [error_msg])
 
     except Exception as e:
-        print("处理群聊消息异常:", e)
+        print(f"[ERROR] 处理群聊消息时发生异常: {e}")
+        try:
+            error_msg = {"type": "text", "data": {"text": "消息处理过程中发生错误"}}
+            sender.send_group_msg(int(group_id), [error_msg])
+        except:
+            pass
