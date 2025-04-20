@@ -17,15 +17,9 @@ from napcat.message_types import MessageSegment
 from utils.message_content import parse_group_message_content
 from utils.ai_message_parser import parse_ai_message_to_segments
 from utils.group_activity import group_activity_manager
-from . import post # 导入 post 模块以调用 send_poke
+from . import post
 from utils.dragon_handler import update_message_history, handle_dragon_logic
 
-# --- 接龙功能相关 ---
-# 存储每个群组最近消息历史 (group_id -> deque of (user_id, text_content))
-# deque 的 maxlen 可以根据需要调整，例如 5 条
-#group_message_history = {}
-#DRAGON_HISTORY_LENGTH = 5 # 存储最近5条消息用于检测
-# --------------------
 
 def check_access(sender_id, is_group=False):
     """

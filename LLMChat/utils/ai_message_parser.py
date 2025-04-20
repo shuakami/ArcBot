@@ -10,6 +10,7 @@ from utils.notebook import notebook
 from utils.files import load_conversation_history
 from utils.music_handler import fetch_music_data
 from utils.emoji_storage import emoji_storage
+import utils.role_manager as role_manager
 
 
 async def parse_ai_message_to_segments(
@@ -29,6 +30,7 @@ async def parse_ai_message_to_segments(
       - [note:笔记ID:delete]：删除指定ID的笔记
       - [poke:QQ号]：群聊中戳一戳某人（仅限群聊）
       - [emoji:表情包ID]：发送表情包
+      - [setrole:角色]：设置角色
     其余内容作为text消息段。
     """
     print(f"[Debug] AI Parser: Received raw text: {text}")
@@ -45,7 +47,8 @@ async def parse_ai_message_to_segments(
         r"|(?P<music>\[music\s*:\s*(?P<music_query>[^\]]+?)\s*\])"
         r"|(?P<note>\[note\s*:\s*(?P<note_content>[^:\]]+?)(?:\s*:\s*(?P<note_action>context|delete))?\s*\])"
         r"|(?P<poke>\[poke\s*:\s*(?P<poke_qq>\d+)\])"
-        r"|(?P<emoji>\[emoji\s*:\s*(?P<emoji_id>[^\]]+?)\s*\])",
+        r"|(?P<emoji>\[emoji\s*:\s*(?P<emoji_id>[^\]]+?)\s*\])"
+        r"|(?P<setrole>\[setrole\s*:\s*(?P<setrole_target>[^\]]+?)\s*\])",
         re.DOTALL
     )
 
@@ -81,7 +84,8 @@ async def parse_ai_message_to_segments(
             return None
         return re.sub(r'\s+', ' ', group.strip())
 
-    # 1) 先处理静默标记（note）
+    # 1) 先处理静默标记（note, setrole）
+    silent_tags_processed = False
     for m in pattern.finditer(text):
         if m.group("note"):
             note_content = clean_matched_group(m.group("note_content"))
@@ -103,13 +107,22 @@ async def parse_ai_message_to_segments(
                         context = get_recent_context(chat_id, chat_type)
                     note_id = notebook.add_note(note_content, context)
                     print(f"[Debug] Note added: {note_content} with ID {note_id}")
+            silent_tags_processed = True
+        elif m.group("setrole"):
+            target_role = clean_matched_group(m.group("setrole_target"))
+            if target_role and chat_id:
+                print(f"[DEBUG] AI requested role change via tag: [setrole:{target_role}] for chat {chat_id} ({chat_type})")
+                role_to_set = target_role if target_role.lower() != "default" else None
+                role_manager.set_active_role(chat_id, chat_type, role_to_set)
+            silent_tags_processed = True
 
-    # 2) 移除所有 note 标记，得到清理后的文本
+    # 2) 移除所有静默标记 (note, setrole)
     cleaned_text = pattern.sub(
-        lambda m: "" if m.group("note") else m.group(0),
+        lambda m: "" if m.group("note") or m.group("setrole") else m.group(0),
         text
     )
-    print(f"[Debug] Cleaned text after removing silent tags: {cleaned_text}")
+    if silent_tags_processed:
+        print(f"[Debug] Cleaned text after removing silent tags: {cleaned_text}")
 
     # 3) 查找并移除第一个 reply 标记
     should_reply = False

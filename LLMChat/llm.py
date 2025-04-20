@@ -2,10 +2,11 @@ import json
 import requests
 
 from config import CONFIG
-from utils.files import load_conversation_history, save_conversation_history
+from utils.files import load_conversation_history, save_conversation_history, get_latest_system_content
 from utils.text import estimate_tokens
 from llm_api import get_ai_response
 from context_utils import build_context_within_limit
+import utils.role_manager as role_manager
 
 
 def process_conversation(chat_id, user_input, chat_type="private"):
@@ -27,9 +28,32 @@ def process_conversation(chat_id, user_input, chat_type="private"):
     print(f"[DEBUG] 开始处理对话 - chat_id: {chat_id}, chat_type: {chat_type}")
     
     try:
+        active_role_prompt = role_manager.get_active_role_prompt(chat_id, chat_type)
+        if active_role_prompt:
+            system_prompt_content = active_role_prompt
+            print(f"[DEBUG] 使用角色 '{role_manager.get_active_role(chat_id, chat_type)}' 的 Prompt")
+        else:
+            system_prompt_content = get_latest_system_content()
+            print(f"[DEBUG] 使用默认 Prompt")
+            
+        # 附加角色切换提示 (无论当前是什么角色，都让 AI 知道可以切换)
+        role_selection_instructions = role_manager.get_role_selection_prompt()
+        if role_selection_instructions:
+            system_prompt_content += role_selection_instructions
+            
+        # 创建系统消息字典
+        system_message = {"role": "system", "content": system_prompt_content}
+
         # 1. 加载完整历史记录
         full_history = load_conversation_history(chat_id, chat_type)
         print(f"[DEBUG] 已加载对话历史，共 {len(full_history)} 条记录")
+
+        # 确保历史记录的第一条是（最新的）系统消息
+        if not full_history or full_history[0]["role"] != "system":
+            full_history.insert(0, system_message)
+        else:
+            # 即使历史记录存在，也用最新的系统消息（角色或默认）更新它
+            full_history[0] = system_message
 
         # 2. 将用户输入添加到对话历史中（记录保存用）
         full_history.append({"role": "user", "content": user_input})

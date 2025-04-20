@@ -6,7 +6,12 @@ from utils.files import get_history_file
 from utils.text import extract_text_from_message
 from utils.whitelist import add_whitelist, remove_whitelist
 from napcat.message_sender import IMessageSender
+import utils.role_manager as role_manager
+from typing import Dict, Any
 
+# 角色添加状态跟踪
+# key: (user_id: str, chat_id: str), value: Dict[str, Any] (e.g., {'state': 'awaiting_prompt', 'type': 'private'})
+user_add_role_state: Dict[tuple[str, str], Dict[str, Any]] = {}
 
 def send_reply(msg_dict, reply, sender: IMessageSender):
     """
@@ -30,6 +35,8 @@ def process_command(msg_dict, sender: IMessageSender):
         return process_msg_list_command(msg_dict, sender)
     elif text.startswith("/arcgrouplist"):
         return process_group_list_command(msg_dict, sender)
+    elif text.startswith("/role"):
+        return process_role_command(msg_dict, sender)
     return False
 
 
@@ -252,3 +259,75 @@ def process_group_list_command(msg_dict, sender: IMessageSender):
     
     send_reply(msg_dict, reply, sender)
     return True
+
+def process_role_command(msg_dict, sender: IMessageSender):
+    """
+    处理 /role 命令及其子命令。
+    """
+    text = extract_text_from_message(msg_dict).strip()
+    sender_info = msg_dict["sender"]
+    user_id = str(sender_info["user_id"])
+    message_type = msg_dict.get("message_type")
+
+    # 确定回复目标 ID
+    chat_id = str(msg_dict.get("group_id") if message_type == "group" else user_id)
+
+    tokens = text.split()
+    sub_command = tokens[1].lower() if len(tokens) > 1 else "list" # 默认为 list
+
+    reply = ""
+
+    if sub_command == "add":
+        # 开始添加角色流程
+        state_key = (user_id, chat_id)
+        user_add_role_state[state_key] = {
+            'state': 'awaiting_prompt',
+            'type': message_type
+        }
+        reply = "请输入角色 Prompt喵："
+        print(f"[DEBUG] User {user_id} in chat {chat_id} started adding role. State: {user_add_role_state[state_key]}")
+
+    elif sub_command == "edit":
+        if len(tokens) < 3:
+            reply = "请指定要编辑的角色名称：/role edit <角色名称>"
+        else:
+            role_name_to_edit = " ".join(tokens[2:]).strip() # 支持带空格的角色名
+            # 检查角色是否存在
+            existing_roles = role_manager.load_roles()
+            if role_name_to_edit not in existing_roles:
+                reply = f"错误：角色模板 '{role_name_to_edit}' 不存在。"
+            else:
+                # 进入等待新 Prompt 的状态
+                state_key = (user_id, chat_id)
+                user_add_role_state[state_key] = {
+                    'state': 'awaiting_edit_prompt',
+                    'type': message_type,
+                    'role_name_to_edit': role_name_to_edit
+                }
+                reply = f"请输入 '{role_name_to_edit}' 的新 Prompt喵："
+                print(f"[DEBUG] User {user_id} in chat {chat_id} started editing role '{role_name_to_edit}'. State: {user_add_role_state[state_key]}")
+
+    elif sub_command == "delete":
+        if len(tokens) < 3:
+            reply = "请指定要删除的角色名称：/role delete <角色名称>"
+        else:
+            role_name_to_delete = " ".join(tokens[2:]).strip()
+            if role_manager.delete_role(role_name_to_delete):
+                reply = f"角色模板 '{role_name_to_delete}' 已删除。"
+            else:
+                reply = f"删除角色模板 '{role_name_to_delete}' 失败（可能是名称不存在喵？）。"
+
+    elif sub_command == "list":
+        # 显示角色列表
+        role_names = role_manager.get_role_names()
+        if not role_names:
+            reply = "当前还没有任何角色模板喵。使用 /role add 开始添加吧~"
+        else:
+            reply = "当前可用角色模板：\n - " + "\n - ".join(role_names)
+    else:
+        reply = "无效的 /role 子命令喵。可用：add, edit, delete, list (默认)"
+
+    if reply:
+        send_reply(msg_dict, reply, sender)
+
+    return True # 表示命令已被处理
