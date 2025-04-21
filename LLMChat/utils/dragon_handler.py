@@ -4,9 +4,9 @@ import asyncio
 from collections import deque
 from typing import Dict
 
-from ..llm import process_conversation
-from .ai_message_parser import parse_ai_message_to_segments
-from ..napcat.message_sender import IMessageSender
+from llm import process_conversation
+from utils.ai_message_parser import parse_ai_message_to_segments
+from napcat.message_sender import IMessageSender
 
 # 存储每个群组最近消息历史 (group_id -> deque of (user_id, text_content))
 group_message_history: Dict[str, deque] = {}
@@ -29,20 +29,22 @@ async def handle_dragon_logic(group_id: str, self_id: str, sender: IMessageSende
         return False
 
     history = group_message_history[group_id]
-    if len(history) < 2:
-        return False # 消息不足两条，无法判断接龙
+    if len(history) < 3:
+        return False # 消息不足三条，无法判断接龙
 
-    # 获取最后两条消息
+    # 获取最后三条消息
     last_user_id, last_text = history[-1]
     prev_user_id, prev_text = history[-2]
+    prev_prev_user_id, prev_prev_text = history[-3]
 
     # 接龙条件判断 (确保内容非空)
     is_dragon = (
-        last_text == prev_text and
+        last_text == prev_text and last_text == prev_prev_text and # 内容相同
         last_text and
-        last_user_id != prev_user_id and
+        last_user_id != prev_user_id and last_user_id != prev_prev_user_id and prev_user_id != prev_prev_user_id and # 三个发送者都不同
         last_user_id != self_id and
-        prev_user_id != self_id
+        prev_user_id != self_id and
+        prev_prev_user_id != self_id # 三个发送者都不是机器人
     )
 
     if is_dragon:
