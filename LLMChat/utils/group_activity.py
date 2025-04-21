@@ -15,7 +15,7 @@ class GroupActivityManager:
         # 基础配置
         self.cold_threshold = 2400  # 40分钟无消息视为冷群
         self.check_interval = 1800   # 每30分钟检查一次
-        self.min_reminder_interval = 3600 * 24  # 同一个群12小时内不重复提醒
+        self.min_reminder_interval = 3600 * 12  # 同一个群12小时内不重复提醒
         
         # 免打扰时段 (24小时制)
         self.quiet_hours = {
