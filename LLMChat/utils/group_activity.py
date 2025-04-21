@@ -13,9 +13,9 @@ class GroupActivityManager:
         self.process_conversation: Optional[Callable] = None
         
         # 基础配置
-        self.cold_threshold = 3600 * 4  # 4小时无消息视为冷群
-        self.check_interval = 3600 * 4   # 每4小时检查一次
-        self.min_reminder_interval = 3600 * 24  # 同一个群24小时内不重复提醒
+        self.cold_threshold = 2400  # 40分钟无消息视为冷群
+        self.check_interval = 1800   # 每30分钟检查一次
+        self.min_reminder_interval = 3600 * 24  # 同一个群12小时内不重复提醒
         
         # 免打扰时段 (24小时制)
         self.quiet_hours = {
@@ -185,7 +185,7 @@ class GroupActivityManager:
                                 "role": "system",
                                 "content": (
                                     f"这个群已经 {inactive_hours} 小时没有互动了。"
-                                    f"现在是群里较活跃的时段，建议找个话题活跃一下气氛。比如戳一戳、@一下谁。"
+                                    f"现在是群里较活跃的时段，建议找个话题活跃一下气氛。比如戳一戳、@一下谁，总之不要让人觉得你很怪异。"
                                     f"注意要自然，避免机械化的提醒。可以根据当前时间段（{datetime.now().hour}点）"
                                     f"选择合适 简短的话题。"
                                 )
