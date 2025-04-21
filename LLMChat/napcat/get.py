@@ -48,12 +48,45 @@ def handle_incoming_message(message):
                     role_name = message_text
                     prompt = current_state_data.get('prompt', '')
                     print(f"[DEBUG] Received name for role add from {user_id} in {chat_id}: {role_name}")
-                    if role_manager.add_role(role_name, prompt):
-                        reply_text = f"角色模板 '{role_name}' 添加成功！"
+                    # 调用 stage_role_for_approval 而不是 add_role
+                    pending_id = role_manager.stage_role_for_approval(
+                        role_name, 
+                        prompt, 
+                        user_id, 
+                        chat_id, 
+                        message_type
+                    )
+
+                    if pending_id:
+                        # 告知用户已提交审核
+                        reply_text = f"角色 '{role_name}' 已提交审核，审核ID: {pending_id}\n请等待管理员批准喵。"
+                        send_reply(msg, reply_text, sender)
+
+                        # 向管理员发送审核请求
+                        admin_qq_list = CONFIG["qqbot"].get("admin_qq", [])
+                        if not admin_qq_list:
+                            print("[WARN] 未配置管理员QQ (admin_qq)，无法发送角色审核请求。")
+                        else:
+                            approval_msg = (
+                                f"收到新的角色模板审核请求：\n"
+                                f"申请人QQ: {user_id}\n"
+                                f"来源: {message_type} {chat_id}\n"
+                                f"审核ID: {pending_id}\n"
+                                f"角色名称: {role_name}\n"
+                                f"-- Prompt --\n{prompt}\n-- Prompt End --\n"
+                                f"请使用 /role approve {pending_id} 或 /role reject {pending_id} 进行操作。"
+                            )
+                            # 给每个管理员都发送私聊
+                            for admin_qq in admin_qq_list:
+                                try:
+                                    sender.send_private_msg(int(admin_qq), approval_msg)
+                                except Exception as send_err:
+                                    print(f"[ERROR] 发送审核通知给管理员 {admin_qq} 失败: {send_err}")
                     else:
-                        # add_role 内部会打印错误，这里给用户一个通用提示
-                        reply_text = f"添加角色模板 '{role_name}' 失败了（可能是名称已存在？）。"
-                    send_reply(msg, reply_text, sender)
+                        # stage 失败 (例如名称为空)
+                        reply_text = f"提交角色 '{role_name}' 审核失败，请检查名称是否有效。"
+                        send_reply(msg, reply_text, sender)
+                    
                     # 清理状态
                     del user_add_role_state[state_key]
                 return # 消息已被状态机处理
