@@ -45,38 +45,12 @@ async def parse_ai_message_to_segments(
         r"|(?P<at1>\[@qq\s*:\s*(?P<at_qq1>\d+)\])"
         r"|(?P<at2>\[CQ:at,qq=(?P<at_qq2>\d+)\])"
         r"|(?P<music>\[music\s*:\s*(?P<music_query>[^\]]+?)\s*\])"
-        r"|(?P<note>\[note\s*:\s*(?P<note_content>[^:\]]+?)(?:\s*:\s*(?P<note_action>context|delete))?\s*\])"
+        r"|(?P<note>\[note\s*:\s*(?P<note_content>.*?)(?:\\s*:\\s*(?P<note_action>delete))?\\s*\])"
         r"|(?P<poke>\[poke\s*:\s*(?P<poke_qq>\d+)\])"
         r"|(?P<emoji>\[emoji\s*:\s*(?P<emoji_id>[^\]]+?)\s*\])"
         r"|(?P<setrole>\[setrole\s*:\s*(?P<setrole_target>[^\]]+?)\s*\])",
         re.DOTALL
     )
-
-    def get_recent_context(chat_id: str, chat_type: str) -> Optional[str]:
-        """获取最近5条对话作为上下文"""
-        if not chat_id:
-            return None
-            
-        try:
-            history = load_conversation_history(chat_id, chat_type)
-            if not history:
-                return None
-                
-            # 过滤掉系统消息，只保留用户和助手的对话
-            dialog = [msg for msg in history if msg["role"] != "system"]
-            # 获取最后5条消息
-            recent = dialog[-5:] if len(dialog) > 5 else dialog
-            
-            context = []
-            for msg in recent:
-                role = "用户" if msg["role"] == "user" else "AI"
-                content = msg["content"]
-                context.append(f"{role}: {content}")
-                
-            return "\n".join(context)
-        except Exception as e:
-            print(f"获取对话上下文失败: {e}")
-            return None
 
     def clean_matched_group(group: Optional[str]) -> Optional[str]:
         """清理匹配组的文本，移除多余空格"""
@@ -86,34 +60,58 @@ async def parse_ai_message_to_segments(
 
     # 1) 先处理静默标记（note, setrole）
     silent_tags_processed = False
+    # 在循环外获取一次当前角色，避免重复查询
+    current_role_name = None
+    role_key_for_notes = notebook.DEFAULT_ROLE_KEY # 默认使用全局笔记key
+    if chat_id and chat_type:
+        current_role_name = role_manager.get_active_role(chat_id, chat_type)
+        if current_role_name:
+            role_key_for_notes = current_role_name # 如果有激活角色，使用角色名作为key
+        print(f"[Debug] Current role for notes in chat ({chat_id}, {chat_type}): {role_key_for_notes}")
+        
     for m in pattern.finditer(text):
         if m.group("note"):
             note_content = clean_matched_group(m.group("note_content"))
             note_action = clean_matched_group(m.group("note_action"))
             
+            # 如果 chat_id 或 chat_type 不存在，无法确定角色，强制使用全局笔记
+            if not chat_id or not chat_type:
+                current_role_key = notebook.DEFAULT_ROLE_KEY
+                print(f"[Warning] chat_id or chat_type missing, forcing notes to {current_role_key}")
+            else:
+                 current_role_key = role_key_for_notes # 使用循环外获取的角色key
+
             if note_content:
                 if note_action == "delete":
                     try:
                         note_id = int(note_content)
-                        if notebook.delete_note(note_id):
-                            print(f"[Debug] Note deleted: ID {note_id}")
+                        # 调用 notebook 方法时传入角色 key
+                        if notebook.delete_note(note_id, role=current_role_key):
+                            # 日志中也加入角色信息
+                            print(f"[Debug] Note deleted for role '{current_role_key}': ID {note_id}")
                         else:
-                            print(f"[Debug] Failed to delete note: ID {note_id} not found")
+                            print(f"[Debug] Failed to delete note for role '{current_role_key}': ID {note_id} not found")
                     except ValueError:
                         print(f"[Debug] Invalid note ID for deletion: {note_content}")
                 else:
-                    context = None
-                    if note_action == "context" and chat_id:
-                        context = get_recent_context(chat_id, chat_type)
-                    note_id = notebook.add_note(note_content, context)
-                    print(f"[Debug] Note added: {note_content} with ID {note_id}")
+                    # 如果不是删除笔记，就保存笔记内容
+                    # 调用 notebook 方法时传入角色 key
+                    new_note_id = notebook.add_note(note_content, role=current_role_key)
+                    if new_note_id != -1:
+                        # 日志中也加入角色信息
+                        print(f"[Debug] Note added for role '{current_role_key}': {note_content} with ID {new_note_id}")
+                    else:
+                        print(f"[Error] Failed to add note for role '{current_role_key}'")
+                        
             silent_tags_processed = True
         elif m.group("setrole"):
             target_role = clean_matched_group(m.group("setrole_target"))
-            if target_role and chat_id:
+            if target_role and chat_id and chat_type: # 确保 chat_id 和 chat_type 有效
                 print(f"[DEBUG] AI requested role change via tag: [setrole:{target_role}] for chat {chat_id} ({chat_type})")
                 role_to_set = target_role if target_role.lower() != "default" else None
                 role_manager.set_active_role(chat_id, chat_type, role_to_set)
+                # 更新当前循环后续可能用到的 role_key_for_notes (虽然目前note处理在前面，但保持一致性)
+                role_key_for_notes = role_to_set if role_to_set else notebook.DEFAULT_ROLE_KEY
             silent_tags_processed = True
 
     # 2) 移除所有静默标记 (note, setrole)
