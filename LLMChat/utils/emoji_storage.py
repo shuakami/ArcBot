@@ -1,12 +1,14 @@
 import json
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import time
 
 class EmojiStorage:
     def __init__(self):
         self.storage_file = "data/emoji_storage.json"
         self.emoji_data = self._load_storage()
+        self._rotation_index = 0  # 轮换起始索引
+        self.MAX_EMOJI_PER_PROMPT = 20 # 每次提示中包含的最大表情数
         
     def _load_storage(self) -> Dict[str, Any]:
         """加载表情包存储文件"""
@@ -95,20 +97,41 @@ class EmojiStorage:
         return self.emoji_data["emojis"].get(emoji_id)
         
     def get_emoji_system_prompt(self) -> str:
-        """生成表情包相关的system prompt"""
-        if not self.emoji_data["emojis"]:
+        """生成表情包相关的system prompt，包含轮换逻辑"""
+        all_emojis_dict = self.emoji_data.get("emojis", {})
+        if not all_emojis_dict:
             return ""
-            
-        emoji_list = []
-        for emoji_id, emoji in self.emoji_data["emojis"].items():
-            emoji_list.append(f"{emoji['summary']} (ID: {emoji_id})")
-            
-        prompt = "\n\n可用的表情包列表：\n"
+
+        all_emojis_list = list(all_emojis_dict.values())
+        total_emojis = len(all_emojis_list)
+        current_emojis_to_show: List[Dict[str, Any]] = []
+
+        if total_emojis <= self.MAX_EMOJI_PER_PROMPT:
+            # 如果总数小于等于限制，显示全部
+            current_emojis_to_show = all_emojis_list
+            self._rotation_index = 0 # 重置索引
+        else:
+            start_index = self._rotation_index
+            end_index = start_index + self.MAX_EMOJI_PER_PROMPT
+            if end_index <= total_emojis:
+                current_emojis_to_show = all_emojis_list[start_index:end_index]
+            else: # 需要回绕
+                current_emojis_to_show = all_emojis_list[start_index:] + all_emojis_list[:end_index % total_emojis]
+
+            # 更新下一次的起始索引
+            self._rotation_index = end_index % total_emojis
+
+        # 格式化当前轮换的表情列表
+        current_emoji_list_str = "\n".join([
+            f"- {e.get('summary', '[未知描述]')} (ID: {e.get('emoji_id', 'N/A')})"
+            for e in current_emojis_to_show
+        ])
+
+        prompt = f"\n\n当前可用表情包 (共 {len(current_emojis_to_show)} 个):\n"
         prompt += "Nya & Saki可以在对话中使用表情包来提升回复的趣味性，但一定要注意表情包的适当、合理使用。\n"
         prompt += "每个表情包的格式为：表情包描述 (ID: 表情包ID)\n"
-        prompt += "\n".join(f"- {emoji}" for emoji in emoji_list)
+        prompt += current_emoji_list_str
         prompt += "\n\n使用表情包时，请使用[emoji:表情包ID]的格式。例如：[emoji:0c6e51da3431db3b34be8df446592b4f]"
-        
         return prompt
 
 # 创建全局实例

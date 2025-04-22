@@ -28,14 +28,16 @@ def process_conversation(chat_id, user_input, chat_type="private"):
     print(f"[DEBUG] 开始处理对话 - chat_id: {chat_id}, chat_type: {chat_type}")
     
     try:
-        active_role_prompt = role_manager.get_active_role_prompt(chat_id, chat_type)
-        if active_role_prompt:
-            system_prompt_content = active_role_prompt
-            print(f"[DEBUG] 使用角色 '{role_manager.get_active_role(chat_id, chat_type)}' 的 Prompt")
+        # 直接获取包含正确角色笔记的完整系统内容
+        system_prompt_content = get_latest_system_content(chat_id, chat_type)
+        
+        # 打印调试信息，说明获取的是哪个角色的内容
+        active_role_name = role_manager.get_active_role(chat_id, chat_type)
+        if active_role_name:
+             print(f"[DEBUG] 获取到角色 '{active_role_name}' 的系统内容 (含笔记)")
         else:
-            system_prompt_content = get_latest_system_content()
-            print(f"[DEBUG] 使用默认 Prompt")
-            
+             print(f"[DEBUG] 获取到默认角色的系统内容 (含全局笔记)")
+
         # 附加角色切换提示 (无论当前是什么角色，都让 AI 知道可以切换)
         role_selection_instructions = role_manager.get_role_selection_prompt()
         if role_selection_instructions:
@@ -48,16 +50,26 @@ def process_conversation(chat_id, user_input, chat_type="private"):
         full_history = load_conversation_history(chat_id, chat_type)
         print(f"[DEBUG] 已加载对话历史，共 {len(full_history)} 条记录")
 
-        # 确保历史记录的第一条是（最新的）系统消息
-        if not full_history or full_history[0]["role"] != "system":
+        # 确保 full_history 是列表且不为空
+        if not isinstance(full_history, list) or not full_history:
+             print("[Warning] 加载的历史记录不是有效列表或为空，将创建新的历史记录。")
+             full_history = [system_message]
+        # 检查第一条是否是 system 消息
+        elif full_history[0].get("role") != "system":
             full_history.insert(0, system_message)
+        # 如果是 system 消息，更新其内容为最新
         else:
-            # 即使历史记录存在，也用最新的系统消息（角色或默认）更新它
-            full_history[0] = system_message
+            full_history[0]["content"] = system_prompt_content # 直接使用上面获取并附加了切换指令的内容
 
         # 2. 将用户输入添加到对话历史中（记录保存用）
-        full_history.append({"role": "user", "content": user_input})
-        print(f"[DEBUG] 已添加用户输入到历史记录")
+        # 确保添加到的是列表
+        if isinstance(full_history, list):
+             full_history.append({"role": "user", "content": user_input})
+             print(f"[DEBUG] 已添加用户输入到历史记录")
+        else:
+             print("[Error] 无法将用户输入添加到非列表历史记录中。")
+             yield "处理历史记录时发生内部错误。"
+             return
 
         # 3. 构建满足 token 限制的上下文
         context_to_send = build_context_within_limit(full_history)

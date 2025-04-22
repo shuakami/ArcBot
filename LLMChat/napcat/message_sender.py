@@ -15,6 +15,10 @@ class IMessageSender(ABC):
     def set_input_status(self, user_id: int):
         pass
 
+    @abstractmethod
+    def set_friend_add_request(self, flag: str, approve: bool, remark: str = ""):
+        pass
+
 # WebSocketSender实现
 import json
 from . import post
@@ -46,4 +50,16 @@ class WebSocketSender(IMessageSender):
         post.send_ws_message(payload)
 
     def set_input_status(self, user_id: int):
-        post.set_input_status(user_id) 
+        post.set_input_status(user_id)
+
+    def set_friend_add_request(self, flag: str, approve: bool, remark: str = ""):
+        """处理好友添加请求"""
+        payload = {
+            "action": "set_friend_add_request",
+            "params": {
+                "flag": flag,
+                "approve": approve,
+                "remark": remark
+            }
+        }
+        post.send_ws_message(payload) 
