@@ -17,6 +17,7 @@ pending_friend_requests: dict[str, dict] = {}
 def handle_incoming_message(message):
     try:
         msg = json.loads(message)
+        print(f"[DEBUG] 收到消息: {msg}")
         post_type = msg.get("post_type")
         sender = WebSocketSender() # 实例化 Sender，后面可能需要
         

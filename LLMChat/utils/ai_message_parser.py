@@ -6,11 +6,12 @@ import time
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from napcat.message_types import MessageSegment
-from utils.notebook import notebook
+from utils.notebook import notebook, DEFAULT_ROLE_KEY
 from utils.files import load_conversation_history
 from utils.music_handler import fetch_music_data
 from utils.emoji_storage import emoji_storage
 import utils.role_manager as role_manager
+import utils.event_manager as event_manager
 
 
 async def parse_ai_message_to_segments(
@@ -31,6 +32,8 @@ async def parse_ai_message_to_segments(
       - [poke:QQ号]：群聊中戳一戳某人（仅限群聊）
       - [emoji:表情包ID]：发送表情包
       - [setrole:角色]：设置角色
+      - [event:事件类型:参与者QQ号列表:事件Prompt内容]：触发事件
+      - [event_end:事件ID]：结束事件 (暂时取消这个，主要依赖超时)
     其余内容作为text消息段。
     """
     print(f"[Debug] AI Parser: Received raw text: {text}")
@@ -48,7 +51,9 @@ async def parse_ai_message_to_segments(
         r"|(?P<note>\[note\s*:\s*(?P<note_content>.*?)(?:\\s*:\\s*(?P<note_action>delete))?\\s*\])"
         r"|(?P<poke>\[poke\s*:\s*(?P<poke_qq>\d+)\])"
         r"|(?P<emoji>\[emoji\s*:\s*(?P<emoji_id>[^\]]+?)\s*\])"
-        r"|(?P<setrole>\[setrole\s*:\s*(?P<setrole_target>[^\]]+?)\s*\])",
+        r"|(?P<setrole>\[setrole\s*:\s*(?P<setrole_target>[^\]]+?)\s*\])"
+        r"|(?P<event>\[event\s*:\s*(?P<event_type>[^:]+?)\s*:\s*(?P<participants>[^:]*?)\s*:\s*(?P<event_prompt>.*?)\s*\\])"
+        r"|(?P<event_end>\[event_end\s*:\s*(?P<event_end_id>[^\]]+?)\])",
         re.DOTALL
     )
 
@@ -58,11 +63,12 @@ async def parse_ai_message_to_segments(
             return None
         return re.sub(r'\s+', ' ', group.strip())
 
-    # 1) 先处理静默标记（note, setrole）
+    # 1) 先处理静默标记（note, setrole, event, event_end）
     silent_tags_processed = False
     # 在循环外获取一次当前角色，避免重复查询
     current_role_name = None
-    role_key_for_notes = notebook.DEFAULT_ROLE_KEY # 默认使用全局笔记key
+    # 直接使用导入的常量 DEFAULT_ROLE_KEY
+    role_key_for_notes = DEFAULT_ROLE_KEY
     if chat_id and chat_type:
         current_role_name = role_manager.get_active_role(chat_id, chat_type)
         if current_role_name:
@@ -76,7 +82,8 @@ async def parse_ai_message_to_segments(
             
             # 如果 chat_id 或 chat_type 不存在，无法确定角色，强制使用全局笔记
             if not chat_id or not chat_type:
-                current_role_key = notebook.DEFAULT_ROLE_KEY
+                # 直接使用导入的常量 DEFAULT_ROLE_KEY
+                current_role_key = DEFAULT_ROLE_KEY
                 print(f"[Warning] chat_id or chat_type missing, forcing notes to {current_role_key}")
             else:
                  current_role_key = role_key_for_notes # 使用循环外获取的角色key
@@ -85,20 +92,15 @@ async def parse_ai_message_to_segments(
                 if note_action == "delete":
                     try:
                         note_id = int(note_content)
-                        # 调用 notebook 方法时传入角色 key
                         if notebook.delete_note(note_id, role=current_role_key):
-                            # 日志中也加入角色信息
                             print(f"[Debug] Note deleted for role '{current_role_key}': ID {note_id}")
                         else:
                             print(f"[Debug] Failed to delete note for role '{current_role_key}': ID {note_id} not found")
                     except ValueError:
                         print(f"[Debug] Invalid note ID for deletion: {note_content}")
                 else:
-                    # 如果不是删除笔记，就保存笔记内容
-                    # 调用 notebook 方法时传入角色 key
                     new_note_id = notebook.add_note(note_content, role=current_role_key)
                     if new_note_id != -1:
-                        # 日志中也加入角色信息
                         print(f"[Debug] Note added for role '{current_role_key}': {note_content} with ID {new_note_id}")
                     else:
                         print(f"[Error] Failed to add note for role '{current_role_key}'")
@@ -106,17 +108,68 @@ async def parse_ai_message_to_segments(
             silent_tags_processed = True
         elif m.group("setrole"):
             target_role = clean_matched_group(m.group("setrole_target"))
-            if target_role and chat_id and chat_type: # 确保 chat_id 和 chat_type 有效
+            if target_role and chat_id and chat_type: 
                 print(f"[DEBUG] AI requested role change via tag: [setrole:{target_role}] for chat {chat_id} ({chat_type})")
                 role_to_set = target_role if target_role.lower() != "default" else None
                 role_manager.set_active_role(chat_id, chat_type, role_to_set)
-                # 更新当前循环后续可能用到的 role_key_for_notes (虽然目前note处理在前面，但保持一致性)
-                role_key_for_notes = role_to_set if role_to_set else notebook.DEFAULT_ROLE_KEY
+                # 更新当前循环后续可能用到的 role_key_for_notes 
+                # 直接使用导入的常量 DEFAULT_ROLE_KEY
+                role_key_for_notes = role_to_set if role_to_set else DEFAULT_ROLE_KEY
+            silent_tags_processed = True
+        elif m.group("event"):
+            # 识别到事件触发标记
+            event_type = clean_matched_group(m.group("event_type"))
+            participants_str = clean_matched_group(m.group("participants"))
+            event_prompt = clean_matched_group(m.group("event_prompt"))
+
+            if not event_type or not event_prompt:
+                 print(f"[WARNING] 接收到无效的事件触发标记，事件类型或 Prompt 内容为空: {m.group(0)}")
+            elif chat_id and chat_type:
+                # 解析参与者列表，以逗号分隔
+                participants = [p.strip() for p in participants_str.split(',') if p.strip()]
+                # 如果参与者列表为空且是群聊，可以考虑获取群成员列表或将当前用户作为参与者，这里简化为只使用标记中的参与者
+                if not participants and chat_type == "private":
+                     # 私聊事件，默认参与者是当前用户
+                     participants = [chat_id]
+                     print(f"[DEBUG] 私聊事件，未指定参与者，默认为当前用户: {chat_id}")
+                elif not participants and chat_type == "group":
+                     print(f"[WARNING] 群聊事件未指定参与者: {m.group(0)}")
+                     pass
+
+                if participants:
+                    # 调用事件管理器注册事件
+                    registered_event_id = event_manager.register_event(
+                        event_type,
+                        participants,
+                        event_prompt,
+                        chat_id,
+                        chat_type
+                    )
+                    if registered_event_id:
+                        print(f"[INFO] 已触发并注册事件: ID {registered_event_id}, Type {event_type}, Participants {participants}")
+                    else:
+                         print(f"[WARNING] 事件注册失败，可能已有同聊天/参与者的活动事件。")
+                else:
+                     print(f"[WARNING] 事件触发标记解析后无有效参与者: {m.group(0)}")
+
+            else:
+                print(f"[WARNING] 接收到事件触发标记但缺乏 chat_id 或 chat_type，无法注册事件: {m.group(0)}")
+
+            silent_tags_processed = True
+        elif m.group("event_end"):
+            event_id_to_remove = clean_matched_group(m.group("event_end_id"))
+            if event_id_to_remove:
+                if event_manager.remove_event(event_id_to_remove):
+                    print(f"[INFO] 已通过标记结束事件: ID {event_id_to_remove}")
+                else:
+                    print(f"[WARNING] 尝试通过标记结束不存在的事件: ID {event_id_to_remove}")
+            else:
+                print(f"[WARNING] 接收到无效的事件结束标记，事件 ID 为空: {m.group(0)}")
             silent_tags_processed = True
 
-    # 2) 移除所有静默标记 (note, setrole)
+    # 2) 移除所有静默标记 (note, setrole, event, event_end)
     cleaned_text = pattern.sub(
-        lambda m: "" if m.group("note") or m.group("setrole") else m.group(0),
+        lambda m: "" if m.group("note") or m.group("setrole") or m.group("event") or m.group("event_end") else m.group(0),
         text
     )
     if silent_tags_processed:

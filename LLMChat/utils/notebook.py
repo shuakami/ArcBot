@@ -20,7 +20,7 @@ class AINotebook:
         self.notes: DefaultDict[str, List[Dict]] = defaultdict(list)
         self._ensure_notebook_file()
         self._load_notes()
-
+    
     def _ensure_notebook_file(self):
         """确保笔记本文件和目录存在"""
         os.makedirs(os.path.dirname(self.notebook_file), exist_ok=True)
@@ -28,7 +28,7 @@ class AINotebook:
             # 初始化为空的 JSON 对象 {}，因为顶层是按角色组织的字典
             with open(self.notebook_file, "w", encoding="utf-8") as f:
                 json.dump({}, f, ensure_ascii=False, indent=2)
-
+    
     def _load_notes(self):
         """加载所有角色的笔记"""
         try:
@@ -52,7 +52,7 @@ class AINotebook:
         except Exception as e:
             print(f"[错误] 加载笔记本时发生未知错误: {e}")
             self.notes = defaultdict(list) # 出错时重置为空
-
+    
     def _save_notes(self):
         """保存所有角色的笔记"""
         try:
@@ -62,7 +62,7 @@ class AINotebook:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"[错误] 保存笔记本出错: {e}")
-
+    
     def _get_next_id(self, role: str) -> int:
         """
         获取指定角色笔记列表的下一个可用 ID。
@@ -96,7 +96,7 @@ class AINotebook:
         except Exception as e:
             print(f"[错误] 为角色 '{role}' 添加笔记失败: {e}")
             return -1
-
+    
     def delete_note(self, note_id: int, role: str = DEFAULT_ROLE_KEY) -> bool:
         """
         删除指定角色下的指定 ID 的笔记。
@@ -110,18 +110,18 @@ class AINotebook:
             original_length = len(notes_list)
             # 筛选掉指定 ID 的笔记
             self.notes[role] = [note for note in notes_list if note.get("id") != note_id]
-
+            
             if len(self.notes[role]) < original_length:
                 self._save_notes()
                 print(f"[信息] 已从角色 '{role}' 删除笔记 (ID: {note_id})")
                 return True
             else:
                 print(f"[信息] 在角色 '{role}' 中未找到要删除的笔记 (ID: {note_id})")
-                return False
+            return False
         except Exception as e:
             print(f"[错误] 从角色 '{role}' 删除笔记 (ID: {note_id}) 失败: {e}")
             return False
-
+    
     def get_notes_for_role(self, role: str = DEFAULT_ROLE_KEY) -> List[Dict]:
         """
         获取指定角色的所有笔记。
@@ -130,7 +130,7 @@ class AINotebook:
         :return: 该角色的笔记列表。
         """
         return self.notes[role]
-
+    
     def get_notes_as_context(self, role: str = DEFAULT_ROLE_KEY) -> str:
         """
         将指定角色的笔记转换为系统提示的上下文格式。
@@ -141,7 +141,7 @@ class AINotebook:
         notes_list = self.notes[role]
         if not notes_list:
             return ""
-
+        
         role_display = "全局" if role == DEFAULT_ROLE_KEY else role
         context = f"以下是为角色 **{role_display}** 记录的重要信息：\\n"
         # 按创建时间排序可能更有用
@@ -153,9 +153,9 @@ class AINotebook:
             created_at_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(created_at_ts)) if created_at_ts else "未知时间"
             # 使用笔记 ID 方便引用
             context += f"- (ID: {note.get('id', 'N/A')}) {content} (记录于 {created_at_str})\\n"
-
+            
         return context.strip()
-
+    
     def clear_notes_for_role(self, role: str = DEFAULT_ROLE_KEY):
         """
         清空指定角色的所有笔记。
