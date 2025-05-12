@@ -6,7 +6,12 @@ from utils.files import get_history_file
 from utils.text import extract_text_from_message
 from utils.whitelist import add_whitelist, remove_whitelist
 from napcat.message_sender import IMessageSender
+import utils.role_manager as role_manager
+from typing import Dict, Any
 
+# 角色添加状态跟踪
+# key: (user_id: str, chat_id: str), value: Dict[str, Any] (e.g., {'state': 'awaiting_prompt', 'type': 'private'})
+user_add_role_state: Dict[tuple[str, str], Dict[str, Any]] = {}
 
 def send_reply(msg_dict, reply, sender: IMessageSender):
     """
@@ -20,6 +25,9 @@ def send_reply(msg_dict, reply, sender: IMessageSender):
 
 def process_command(msg_dict, sender: IMessageSender):
     text = extract_text_from_message(msg_dict)
+    sender_qq = str(msg_dict["sender"]["user_id"])
+    admin_qq_list = CONFIG["qqbot"].get("admin_qq", [])
+
     if text.startswith("/arcreset"):
         return process_reset_command(msg_dict, sender)
     elif text.startswith("/archelp"):
@@ -30,6 +38,15 @@ def process_command(msg_dict, sender: IMessageSender):
         return process_msg_list_command(msg_dict, sender)
     elif text.startswith("/arcgrouplist"):
         return process_group_list_command(msg_dict, sender)
+    elif text.startswith("/role"):
+        tokens = text.split()
+        sub_command = tokens[1].lower() if len(tokens) > 1 else "list"
+        # 检查是否是管理员命令
+        if sub_command in ["pending", "approve", "reject"]:
+            return process_role_admin_command(msg_dict, sender)
+        else:
+            # 普通用户的 /role 命令
+            return process_role_command(msg_dict, sender)
     return False
 
 
@@ -252,3 +269,173 @@ def process_group_list_command(msg_dict, sender: IMessageSender):
     
     send_reply(msg_dict, reply, sender)
     return True
+
+def process_role_command(msg_dict, sender: IMessageSender):
+    """
+    处理 /role 命令及其子命令。
+    """
+    text = extract_text_from_message(msg_dict).strip()
+    sender_info = msg_dict["sender"]
+    user_id = str(sender_info["user_id"])
+    message_type = msg_dict.get("message_type")
+
+    # 确定回复目标 ID
+    chat_id = str(msg_dict.get("group_id") if message_type == "group" else user_id)
+
+    tokens = text.split()
+    sub_command = tokens[1].lower() if len(tokens) > 1 else "list" # 默认为 list
+
+    reply = ""
+
+    if sub_command == "add":
+        # 开始添加角色流程
+        state_key = (user_id, chat_id)
+        user_add_role_state[state_key] = {
+            'state': 'awaiting_prompt',
+            'type': message_type
+        }
+        reply = "请输入角色 Prompt喵："
+        print(f"[DEBUG] User {user_id} in chat {chat_id} started adding role. State: {user_add_role_state[state_key]}")
+
+    elif sub_command == "edit":
+        if len(tokens) < 3:
+            reply = "请指定要编辑的角色名称：/role edit <角色名称>"
+        else:
+            role_name_to_edit = " ".join(tokens[2:]).strip() # 支持带空格的角色名
+            # 检查角色是否存在
+            existing_roles = role_manager.load_roles()
+            if role_name_to_edit not in existing_roles:
+                reply = f"错误：角色模板 '{role_name_to_edit}' 不存在。"
+            else:
+                # 进入等待新 Prompt 的状态
+                state_key = (user_id, chat_id)
+                user_add_role_state[state_key] = {
+                    'state': 'awaiting_edit_prompt',
+                    'type': message_type,
+                    'role_name_to_edit': role_name_to_edit
+                }
+                reply = f"请输入 '{role_name_to_edit}' 的新 Prompt喵："
+                print(f"[DEBUG] User {user_id} in chat {chat_id} started editing role '{role_name_to_edit}'. State: {user_add_role_state[state_key]}")
+
+    elif sub_command == "delete":
+        if len(tokens) < 3:
+            reply = "请指定要删除的角色名称：/role delete <角色名称>"
+        else:
+            role_name_to_delete = " ".join(tokens[2:]).strip()
+            if role_manager.delete_role(role_name_to_delete):
+                reply = f"角色模板 '{role_name_to_delete}' 已删除喵...（请注意，删除后无法恢复喵）"
+            else:
+                reply = f"删除角色模板 '{role_name_to_delete}' 失败（可能是名称不存在喵？）。"
+
+    elif sub_command == "list":
+        # 显示角色列表
+        role_names = role_manager.get_role_names()
+        if not role_names:
+            reply = "当前还没有任何角色模板喵。使用 /role add 开始添加吧~"
+        else:
+            reply = "当前可用角色模板：\n - " + "\n - ".join(role_names)
+            reply += "\n\n使用 /role add|edit|delete <名称> 进行管理。"
+    else:
+        reply = "无效的 /role 子命令喵。\n"
+        reply += "用法: \n"
+        reply += "  /role list (或 /role) - 查看可用角色\n"
+        reply += "---- 管理员命令 ----\n"
+        reply += "  /role pending        - 查看待审核角色\n"
+        reply += "  /role approve <审核ID> - 批准角色\n"
+        reply += "  /role reject <审核ID>  - 拒绝角色\n"
+        reply += "--------------------\n"
+        reply += "  /role add          - 添加新角色 (提交审核)\n"
+        reply += "  /role edit <名称> - 编辑现有角色 (按提示操作)\n"
+        reply += "  /role delete <名称> - 删除指定角色"
+
+    if reply:
+        send_reply(msg_dict, reply, sender)
+
+    return True # 表示命令已被处理
+
+# +++ 新增管理员审核处理函数 +++
+def process_role_admin_command(msg_dict, sender: IMessageSender):
+    """处理 /role pending, approve, reject 命令"""
+    text = extract_text_from_message(msg_dict).strip()
+    sender_info = msg_dict["sender"]
+    user_id = str(sender_info["user_id"])
+    message_type = msg_dict.get("message_type")
+    chat_id = str(msg_dict.get("group_id") if message_type == "group" else user_id)
+
+    # 检查管理员权限
+    admin_qq_list = CONFIG["qqbot"].get("admin_qq", [])
+    if user_id not in admin_qq_list:
+        send_reply(msg_dict, "抱歉，只有管理员才能执行此操作喵。", sender)
+        return True # 明确拒绝
+
+    tokens = text.split()
+    if len(tokens) < 2:
+        send_reply(msg_dict, "无效的管理命令。请使用 /role pending, /role approve <ID>, 或 /role reject <ID>", sender)
+        return True
+
+    admin_sub_command = tokens[1].lower()
+    reply = ""
+
+    if admin_sub_command == "pending":
+        pending_roles = role_manager.list_pending_roles()
+        if not pending_roles:
+            reply = "当前没有待审核的角色模板。"
+        else:
+            reply = "待审核的角色列表：\n"
+            for pid, info in pending_roles.items():
+                reply += f"- ID: {pid}\n  名称: {info.get('name', '?')}\n  申请人: {info.get('requester_user_id', '?')}\n  来源: {info.get('requester_chat_type', '?')} {info.get('requester_chat_id', '?')}\n  (Prompt 预览: {info.get('prompt', '')[:30]}...)\n"
+            reply += "\n使用 /role approve <ID> 或 /role reject <ID> 处理。"
+
+    elif admin_sub_command == "approve":
+        if len(tokens) < 3:
+            reply = "请提供要批准的审核 ID: /role approve <审核ID>"
+        else:
+            pending_id_to_approve = tokens[2].strip()
+            success, approved_info = role_manager.approve_pending_role(pending_id_to_approve)
+            if success and approved_info:
+                reply = f"角色 '{approved_info['name']}' (ID: {pending_id_to_approve}) 已批准并添加。"
+                # 通知原申请人
+                try:
+                    notify_msg = f"好耶！你提交的角色模板 '{approved_info['name']}' 已通过审核喵。"
+                    requester_chat_type = approved_info.get("requester_chat_type")
+                    requester_chat_id = approved_info.get("requester_chat_id")
+                    if requester_chat_type == "private":
+                        sender.send_private_msg(int(requester_chat_id), notify_msg)
+                    elif requester_chat_type == "group":
+                        sender.send_group_msg(int(requester_chat_id), notify_msg)
+                except Exception as notify_err:
+                    print(f"[WARN] 批准角色后通知申请人失败: {notify_err}")
+            elif approved_info:
+                reply = f"批准角色 '{approved_info['name']}' (ID: {pending_id_to_approve}) 失败，角色未能添加到主列表（可能重名？）。请检查日志。"
+            else:
+                reply = f"批准失败：找不到审核 ID '{pending_id_to_approve}' 或处理出错。"
+
+    elif admin_sub_command == "reject":
+        if len(tokens) < 3:
+            reply = "请提供要拒绝的审核 ID: /role reject <审核ID>"
+        else:
+            pending_id_to_reject = tokens[2].strip()
+            success, rejected_info = role_manager.reject_pending_role(pending_id_to_reject)
+            if success and rejected_info:
+                reply = f"角色 '{rejected_info['name']}' (ID: {pending_id_to_reject}) 的审核请求已拒绝。"
+                # 通知原申请人
+                try:
+                    notify_msg = f"抱歉，你提交的角色模板 '{rejected_info['name']}' 未通过审核。"
+                    requester_chat_type = rejected_info.get("requester_chat_type")
+                    requester_chat_id = rejected_info.get("requester_chat_id")
+                    if requester_chat_type == "private":
+                        sender.send_private_msg(int(requester_chat_id), notify_msg)
+                    elif requester_chat_type == "group":
+                         # 在群里通知有点奇怪，可以选择私聊通知申请人
+                         sender.send_private_msg(int(rejected_info.get("requester_user_id")), notify_msg)
+                except Exception as notify_err:
+                    print(f"[WARN] 拒绝角色后通知申请人失败: {notify_err}")
+            else:
+                reply = f"拒绝失败：找不到审核 ID '{pending_id_to_reject}' 或处理出错。"
+    else:
+        reply = "无效的管理命令。请使用 /role pending, /role approve <ID>, 或 /role reject <ID>"
+
+    if reply:
+        send_reply(msg_dict, reply, sender)
+
+    return True # 表示命令已被处理

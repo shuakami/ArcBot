@@ -1,65 +1,94 @@
 import json
 import websocket
-import time
 import threading
 from config import CONFIG
+from napcat.get import handle_incoming_message
 
-ws_conn = None
+ws_app = None
 
-def send_ws_message(message_dict):
-    """
-    通过 ws 连接发送 json 消息
-    """
-    global ws_conn
-    try:
-        ws_conn.send(json.dumps(message_dict))
-    except Exception as e:
-        print("ws发送消息出错:", e)
+def on_message(ws, message):
+    """处理收到的WebSocket消息"""
+    print(f"[DEBUG] WebSocket收到消息: {message[:200]}...")  # 只打印前200个字符
+    handle_incoming_message(message)
 
-def set_input_status(user_id):
-    """
-    向 ws 发送设置输入状态的消息
-    """
-    status_payload = {
-        "action": "set_input_status",
-        "params": {
-            "user_id": user_id,
-            "event_type": 1
-        }
-    }
-    send_ws_message(status_payload)
+def on_error(ws, error):
+    """处理WebSocket错误"""
+    print(f"[ERROR] WebSocket错误: {error}")
+
+def on_close(ws, close_status_code, close_msg):
+    """处理WebSocket连接关闭"""
+    print(f"[INFO] WebSocket连接已关闭 - 状态码: {close_status_code}, 消息: {close_msg}")
+
+def on_open(ws):
+    """处理WebSocket连接建立"""
+    print("[INFO] WebSocket连接已建立")
 
 def init_ws():
-    """
-    初始化 ws 连接，并在独立线程中运行
-    """
-    global ws_conn
-    def on_message(ws, message):
-        # 将接收到消息交给 get.py 中的处理逻辑
-        from napcat.get import handle_incoming_message
-        handle_incoming_message(message)
-
-    def on_error(ws, error):
-        print("ws错误:", error)
-
-    def on_close(ws, close_status_code, close_msg):
-        print("ws连接关闭:", close_status_code, close_msg)
-        time.sleep(5)
-        connect_ws()
-
-    def on_open(ws):
-        print("ws连接已开启")
-
-    def connect_ws():
-        global ws_conn
-        ws_conn = websocket.WebSocketApp(
-            CONFIG["qqbot"]["ws_url"],
-            header={"Authorization": CONFIG["qqbot"]["token"]},
+    """初始化WebSocket连接"""
+    global ws_app
+    
+    ws_url = CONFIG["qqbot"]["ws_url"]
+    token = CONFIG["qqbot"]["token"]
+    print(f"[INFO] 正在连接WebSocket服务器: {ws_url}")
+    
+    try:
+        # 添加token到headers
+        headers = {
+            "Authorization": f"Bearer {token}"
+        }
+        
+        ws_app = websocket.WebSocketApp(
+            ws_url,
+            header=headers,
             on_message=on_message,
             on_error=on_error,
             on_close=on_close,
             on_open=on_open
         )
-        ws_conn.run_forever()
+        
+        wst = threading.Thread(target=ws_app.run_forever)
+        wst.daemon = True
+        wst.start()
+        print("[INFO] WebSocket客户端线程已启动")
+        
+    except Exception as e:
+        print(f"[ERROR] 初始化WebSocket连接失败: {e}")
+        raise
 
-    threading.Thread(target=connect_ws, daemon=True).start()
+def send_ws_message(data):
+    """发送WebSocket消息"""
+    global ws_app
+    
+    if not ws_app:
+        print("[ERROR] WebSocket未初始化")
+        return
+        
+    try:
+        message = json.dumps(data)
+        print(f"[DEBUG] 发送WebSocket消息: {message[:200]}...")  # 只打印前200个字符
+        ws_app.send(message)
+    except Exception as e:
+        print(f"[ERROR] 发送WebSocket消息失败: {e}")
+
+def set_input_status(user_id):
+    """设置输入状态"""
+    data = {
+        "action": "send_private_msg",
+        "params": {
+            "user_id": user_id,
+            "message": "[CQ:typing]"
+        }
+    }
+    send_ws_message(data)
+
+def send_poke(group_id: str, user_id: str):
+    """发送群聊戳一戳"""
+    print(f"[DEBUG] 准备发送戳一戳到群 {group_id} 的用户 {user_id}")
+    data = {
+        "action": "group_poke",
+        "params": {
+            "group_id": int(group_id), # 确保是整数
+            "user_id": int(user_id)  # 确保是整数
+        }
+    }
+    send_ws_message(data)

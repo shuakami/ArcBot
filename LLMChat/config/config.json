@@ -9,7 +9,7 @@
     "qq_list_mode": "black",
     "group_list_mode": "black",
     "group_prefix": "#"
-  },
+    },
   "ai": {
     "api_url": "https://api.deepseek.com/chat/completions",
     "token": "sk-xxx",

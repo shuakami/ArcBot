@@ -5,6 +5,7 @@
 """
 from typing import Dict, Any, List
 from llm_api import get_ai_response_with_image
+from config import CONFIG
 import os
 import requests
 import tempfile
@@ -31,7 +32,6 @@ def describe_image(image_source: str, image_type: str = "url") -> str:
         # 兼容 desc 为 list 或 str
         desc_text = None
         if isinstance(desc, list):
-            # 取第一个元素的 text 字段
             if desc and isinstance(desc[0], dict) and 'text' in desc[0]:
                 desc_text = desc[0]['text']
             else:
@@ -45,100 +45,96 @@ def describe_image(image_source: str, image_type: str = "url") -> str:
         print(f"[ERROR] describe_image: Failed, error='{str(e)}'")
         return f"[图片内容描述获取失败: {str(e)}]"
 
-def get_mface_description(mface_data: dict) -> str:
-    """
-    表情包描述接口（旧逻辑，仅处理URL）。
-    """
-    summary = mface_data.get("summary")
-    desc_parts = []
-    if summary:
-        desc_parts.append(f"[表情包: {summary}]")
-    url = mface_data.get("url") # 旧逻辑只处理url
-    if url:
-        desc_parts.append(describe_image(url, image_type="url")) # 明确是url
-    return " ".join(desc_parts) if desc_parts else "[表情包]"
-
 def parse_group_message_content(msg_dict: Dict[str, Any]) -> str:
     """
-    解析群聊消息内容，拼接图片/表情包描述和用户文本。
-    优先使用file字段，若无效则尝试下载url到临时文件再识别。
+    解析群聊消息内容，按原始顺序拼接图片/表情包描述和用户文本。
+    - 只有在遇到以 prefix 开头的文本段之后，才对后续的 image/mface 进行识别；
+    - 识别结果与原有段落顺序保持一致，确保最前面仍是带 # 的文本，方便后续去除前缀。
     """
     message_segments: List[Dict[str, Any]] = msg_dict.get("message", [])
-    text_parts = []
-    image_descs = []
-    mface_descs = []
-    temp_files_to_delete = [] # 记录需要删除的临时文件
+    output_parts: List[str] = []
+    temp_files_to_delete: List[str] = []
+    should_describe_images = False
+    reply_prefix = CONFIG["qqbot"].get("group_prefix", "#")
 
     for seg in message_segments:
         seg_type = seg.get("type")
         data = seg.get("data", {})
-        temp_file_path = None # 当前循环的临时文件路径
-        print(f"[DEBUG] parse_group_message: Found {seg_type}, data='{data}'")
+        temp_file_path = None
 
-        try:
-            if seg_type == "text":
-                text_parts.append(data.get("text", ""))
-            elif seg_type == "image" or seg_type == "mface":
-                image_source_path = None
-                is_temp_file = False
-                file_path = data.get("file")
-                url = data.get("url")
-                print(f"[DEBUG] parse_group_message: Found {seg_type}, file='{file_path}', url='{url}'")
+        # 文本段：检查前缀并直接加入输出
+        if seg_type == "text":
+            text = data.get("text", "").strip()
+            print(f"[DEBUG] parse_group_message: Found text: '{text}'")
+            if text.startswith(reply_prefix):
+                should_describe_images = True
+            output_parts.append(text)
 
-                # 1. 优先尝试 file 字段
-                if file_path and os.path.exists(file_path):
-                    image_source_path = file_path
-                    print(f"[DEBUG] parse_group_message: Using local file path: {image_source_path}")
+        # 图片或表情包段
+        elif seg_type in ("image", "mface"):
+            print(f"[DEBUG] parse_group_message: Found {seg_type}, data='{data}'")
+            # 如果尚未检测到前缀，则只放占位符
+            if not should_describe_images:
+                if seg_type == "image":
+                    output_parts.append("[图片]")
                 else:
-                    # 2. file 无效，尝试 url 下载
-                    if url:
-                        print(f"[DEBUG] parse_group_message: File path invalid or missing, attempting download from URL: {url}")
-                        try:
-                            response = requests.get(url, stream=True, timeout=10) # 增加超时
-                            response.raise_for_status() # 检查HTTP错误
-                            # 创建临时文件
-                            with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as temp_f:
-                                for chunk in response.iter_content(chunk_size=8192):
-                                    temp_f.write(chunk)
-                                temp_file_path = temp_f.name
-                                temp_files_to_delete.append(temp_file_path) # 加入待删除列表
-                                image_source_path = temp_file_path
-                                is_temp_file = True
-                                print(f"[DEBUG] parse_group_message: Downloaded to temporary file: {image_source_path}")
-                        except requests.exceptions.RequestException as req_e:
-                            print(f"下载图片URL失败: {url}, Error: {req_e}")
-                        except IOError as io_e:
-                            print(f"写入临时文件失败: {io_e}")
-                        except Exception as down_e: # 其他下载或文件操作异常
-                            print(f"处理图片URL时发生未知错误: {url}, Error: {down_e}")
+                    summary = data.get("summary")
+                    output_parts.append(f"[表情包: {summary}]" if summary else "[表情包]")
+                continue
 
-                # 3. 如果获取到有效图片源（本地或临时文件），进行描述
-                if image_source_path:
-                    desc = describe_image(image_source_path, image_type="file")
-                    if seg_type == "image":
-                        image_descs.append(desc)
-                    elif seg_type == "mface":
-                         summary = data.get("summary")
-                         mface_part = f"[表情包: {summary}] {desc}" if summary else desc
-                         mface_descs.append(mface_part)
+            # 开始识别图片
+            image_source_path = None
+            is_temp_file = False
+            file_path = data.get("file")
+            url = data.get("url")
 
-            elif seg_type == "face":
-                # QQ原生表情可选处理
-                face_id = data.get("id")
-                if face_id:
-                    mface_descs.append(f"[QQ表情:{face_id}]")
+            # 1. 优先使用本地 file 字段
+            if file_path and os.path.exists(file_path):
+                image_source_path = file_path
+                print(f"[DEBUG] parse_group_message: Using local file path: {image_source_path}")
+            else:
+                # 2. 下载 URL
+                if url:
+                    print(f"[DEBUG] parse_group_message: Downloading from URL: {url}")
+                    try:
+                        response = requests.get(url, stream=True, timeout=10)
+                        response.raise_for_status()
+                        with tempfile.NamedTemporaryFile(delete=False, suffix='.tmp') as tmpf:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                tmpf.write(chunk)
+                            temp_file_path = tmpf.name
+                            temp_files_to_delete.append(temp_file_path)
+                            image_source_path = temp_file_path
+                            is_temp_file = True
+                            print(f"[DEBUG] parse_group_message: Downloaded to temp file: {image_source_path}")
+                    except Exception as e:
+                        print(f"[ERROR] 下载或保存图片失败: {e}")
 
-        except Exception as e:
-             print(f"处理消息段时出错: {seg}, Error: {e}")
-             # 如果当前循环创建了临时文件，确保它被标记为删除
-             if temp_file_path and temp_file_path not in temp_files_to_delete:
-                 temp_files_to_delete.append(temp_file_path)
+            # 3. 调用识别接口并加入输出
+            if image_source_path:
+                desc = describe_image(image_source_path, image_type="file")
+                if seg_type == "image":
+                    output_parts.append(desc)
+                else:
+                    summary = data.get("summary")
+                    mface_part = f"[表情包: {summary}] {desc}" if summary else desc
+                    output_parts.append(mface_part)
 
-    # 函数结束前，清理所有本次创建的临时文件
-    for f_path in temp_files_to_delete:
+        # QQ 原生表情
+        elif seg_type == "face":
+            face_id = data.get("id")
+            if face_id:
+                output_parts.append(f"[QQ表情:{face_id}]")
+
+        # 其他类型直接忽略（或可扩展）
+        else:
+            continue
+
+    # 清理所有本次创建的临时文件
+    for fpath in temp_files_to_delete:
         try:
-            os.remove(f_path)
+            os.remove(fpath)
         except OSError as e:
-            print(f"删除临时文件失败: {f_path}, Error: {e}")
+            print(f"[ERROR] 删除临时文件失败: {fpath}, Error: {e}")
 
-    return " ".join(image_descs + mface_descs + text_parts).strip() 
+    return " ".join(output_parts).strip()

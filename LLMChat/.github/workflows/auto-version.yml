@@ -1,0 +1,99 @@
+name: Bump Version and Create Release
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  bump_version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get latest version tag
+        id: get_version
+        run: |
+          git fetch --tags --force
+          LATEST_TAG=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" | sort -V | tail -n 1)
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
+          echo "Latest tag is: $LATEST_TAG"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Calculate next version
+        id: calc_version
+        run: |
+          LATEST_TAG="${{ steps.get_version.outputs.latest_tag }}"
+          VERSION_CORE=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_CORE"
+          NEW_PATCH=$((PATCH + 1))
+          NEW_TAG="v${MAJOR}.${MINOR}.${NEW_PATCH}"
+          echo "Calculated new tag: $NEW_TAG"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push new tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_TAG="${{ steps.calc_version.outputs.new_tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          echo "Created and pushed tag $NEW_TAG"
+
+      - name: Generate Release Notes
+        id: generate_release_notes
+        run: |
+          LATEST_TAG="${{ steps.get_version.outputs.latest_tag }}"
+          NEW_TAG="${{ steps.calc_version.outputs.new_tag }}"
+          echo "Generating release notes between $LATEST_TAG and $NEW_TAG (using <br>, no markdown syntax)"
+          
+          COMMIT_LOG=""
+          RAW_TEXT_NOTES=""
+          BR_TAG="<br>"
+          P_BREAK="<br><br>"
+
+          # Git log format: just the subject, hash, author, followed by <br>
+          # No preceding '*' or other markdown
+          GIT_LOG_FORMAT="%s (%h) by @%an$BR_TAG"
+
+          if [ "$LATEST_TAG" == "v0.0.0" ]; then
+            COMMIT_LOG=$(git log --pretty=format:"$GIT_LOG_FORMAT" HEAD)
+            RAW_TEXT_NOTES="Release $NEW_TAG 🎉 $P_BREAK_TAG_PART_This is the first automated release!$P_BREAK_TAG_PART_Changes$P_BREAK_TAG_PART_$COMMIT_LOG$P_BREAK_TAG_PART_Thanks to all contributors!"
+          else
+            COMMIT_LOG=$(git log --pretty=format:"$GIT_LOG_FORMAT" $LATEST_TAG..HEAD)
+            # If no commits, COMMIT_LOG will be empty. Add a placeholder if you want.
+            if [ -z "$COMMIT_LOG" ]; then
+              COMMIT_LOG="No specific changes listed.$BR_TAG"
+            fi
+            RAW_TEXT_NOTES="Release $NEW_TAG 🎉 $P_BREAK_TAG_PART_This release includes the following changes since $LATEST_TAG:$P_BREAK_TAG_PART_Changes$P_BREAK_TAG_PART_$COMMIT_LOG$P_BREAK_TAG_PART_Thanks to all contributors!"
+          fi
+          
+          # Replace placeholders for paragraph breaks to avoid issues with shell interpretation of P_BREAK in one go
+          RAW_TEXT_NOTES=${RAW_TEXT_NOTES//\$P_BREAK_TAG_PART_/$P_BREAK}
+          # Note: BR_TAG is already embedded in COMMIT_LOG items, no need for BR_TAG_PART_ replacement in the main structure if not used elsewhere.
+
+          ENCODED_FOR_GITHUB_OUTPUT="${RAW_TEXT_NOTES//'%'/'%25'}"
+          ENCODED_FOR_GITHUB_OUTPUT="${ENCODED_FOR_GITHUB_OUTPUT//$'\n'/'%0A'}" # Actual newlines (if any from commands) still need encoding
+          ENCODED_FOR_GITHUB_OUTPUT="${ENCODED_FOR_GITHUB_OUTPUT//$'\r'/'%0D'}"
+          echo "generated_release_notes=$ENCODED_FOR_GITHUB_OUTPUT" >> "$GITHUB_OUTPUT"
+          
+          echo "Raw text notes with <br> generated (will be passed to Python script):"
+          echo "$RAW_TEXT_NOTES"
+
+      - name: Create GitHub Release using Python
+        env:
+          INPUT_NEW_TAG: ${{ steps.calc_version.outputs.new_tag }}
+          INPUT_RELEASE_NOTES: ${{ steps.generate_release_notes.outputs.generated_release_notes }}
+          INPUT_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python .github/scripts/create_release.py
