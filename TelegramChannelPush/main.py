@@ -8,10 +8,7 @@ import re
 from telethon import TelegramClient, events
 
 from post_extension import load_config, send_msg_to_group
-
-def load_config(config_path='config.json'):
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
+from text_formatter import process_markdown_links_and_add_references
 
 config = load_config()
 
@@ -58,7 +55,8 @@ async def main():
     @client.on(events.NewMessage(chats=channel))
     async def handler(event):
         msg = event.message
-        text = msg.message or ""
+        # 优先使用 event.message.text_markdown，如果为空，则使用 event.message.message
+        text = msg.text_markdown if msg.text_markdown else (msg.message or "")
         if config.get("debug"):
             print(f"收到消息：{msg}")
 
@@ -82,6 +80,13 @@ async def main():
             for r in removal_strings:
                 merged_text = merged_text.replace(r, "")
             text = merged_text
+        
+        # 处理Markdown链接并生成引用
+        processed_text, references_string = process_markdown_links_and_add_references(text)
+        if references_string:
+            text = processed_text + "\n\n" + references_string
+        else:
+            text = processed_text
         
         text = re.sub(r'(\s*\n+\s*\S*\s*\n*\s*)$', '', text)
         text = text.rstrip()
