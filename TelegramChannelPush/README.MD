@@ -16,6 +16,7 @@
 .
 ├── main.py               # 主脚本，负责监听TG频道并处理消息
 ├── post_extension.py     # Napcat POST模块，负责将消息发送到目标群
+├── text_formatter.py     # 消息文本处理模块
 └── config.json           # 配置文件，存放API及自定义参数
 ```
 

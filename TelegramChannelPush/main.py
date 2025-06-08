@@ -1,138 +1,139 @@
-import json
-import base64
 import asyncio
-import socks
-import os
-from datetime import timezone
-import pytz
+import base64
+import json
 import re
+from datetime import timezone
+from typing import List
+
+import pytz
+import socks
 from telethon import TelegramClient, events
 
-from post_extension import send_msg_to_group
+from post_extension import load_config, send_msg_to_group
 from text_formatter import process_markdown_links_and_add_references
 
-def load_config(config_path='config.json'):
-    with open(config_path, 'r', encoding='utf-8') as f:
-        return json.load(f)
-
+# ────────────────── 配置 ──────────────────
 config = load_config()
 
 api_id = config["api_id"]
 api_hash = config["api_hash"]
-phone_number = config.get("phone_number", "")
+phone_number = config["phone_number"]
 channel_username = config["channel_username"]
-proxy_config = config["proxy"]
-
-# 为 Telethon 创建会话目录
-sessions_dir = 'sessions'
-if not os.path.exists(sessions_dir):
-    os.makedirs(sessions_dir)
+proxy_cfg = config["proxy"]
 
 client = TelegramClient(
-    os.path.join(sessions_dir, str(api_id)),
+    f"./sessions/{api_id}",
     api_id,
     api_hash,
     proxy={
-        'proxy_type': getattr(socks, proxy_config['proxy_type'].upper()),
-        'addr': proxy_config['addr'],
-        'port': proxy_config['port'],
-        'rdns': proxy_config['rdns']
-    }
+        "proxy_type": getattr(socks, proxy_cfg["proxy_type"].upper()),
+        "addr": proxy_cfg["addr"],
+        "port": proxy_cfg["port"],
+        "rdns": proxy_cfg["rdns"],
+    },
 )
 
-async def download_images_as_base64(message):
-    base64_list = []
-    if message.grouped_id:
-        # 如果是相册，多张图共用同一个 grouped_id
-        recent_msgs = await client.get_messages(channel_username, limit=20)
-        grouped_msgs = [m for m in recent_msgs if m.grouped_id == message.grouped_id]
-        for m in grouped_msgs:
-            if m.photo:
-                image_bytes = await m.download_media(file=bytes)
-                b64_str = base64.b64encode(image_bytes).decode('utf-8')
-                base64_list.append(b64_str)
-    elif message.photo:
-        image_bytes = await message.download_media(file=bytes)
-        b64_str = base64.b64encode(image_bytes).decode('utf-8')
-        base64_list.append(b64_str)
-    return base64_list
+import logging
+logging.basicConfig(level=logging.DEBUG if config.get("debug") else logging.INFO)
+logging.getLogger('telethon').setLevel(logging.DEBUG if config.get("debug") else logging.INFO)
 
+# ────────────────── 图片下载为 base64 ──────────────────
+async def download_images_as_base64(message) -> List[str]:
+    imgs: List[str] = []
+
+    async def _dl(m):
+        if m.photo:
+            b = await m.download_media(file=bytes)
+            imgs.append(base64.b64encode(b).decode())
+
+    if message.grouped_id:
+        recent = await client.get_messages(channel_username, limit=20)
+        grouped = [m for m in recent if m.grouped_id == message.grouped_id]
+        for m in grouped:
+            await _dl(m)
+    else:
+        await _dl(message)
+
+    return imgs
+
+
+async def keep_alive():
+    """
+    每 5 秒向 Telegram 来一次极轻量的 get_me()，
+    如果底层 socket 已被对方掐断，Telethon 会立刻抛出
+    ConnectionError 并自动重连。
+    """
+    while True:
+        try:
+            await client.get_me()
+        except Exception as e:
+            print("⚠️  keep-alive: reconnecting", e)
+        await asyncio.sleep(5)
+
+# ────────────────── 主 ──────────────────
 async def main():
-    print("🚀 正在启动 Telegram 频道监听...")
+    print("🚀 监听启动")
     await client.start(phone_number)
     channel = await client.get_entity(channel_username)
 
     @client.on(events.NewMessage(chats=channel))
     async def handler(event):
         msg = event.message
-        # 优先使用 event.message.text，如果为空，则使用 event.message.message
-        text = msg.text if msg.text else (msg.message or "")
-
-        # 立即清理指定的屏蔽词
-        removal_strings = config.get("removal_strings", [])
-        for r in removal_strings:
-            text = text.replace(r, "")
-
         if config.get("debug"):
             print(f"收到消息：{msg}")
 
-        # 如果是相册消息，需要判断是否是该相册最后一条；若不是，则跳过防止重复
+        raw_text = msg.message or ""
+        removal_strings = config.get("removal_strings", [])
+
+        # 相册只处理最后一条
         if msg.grouped_id:
-            recent_msgs = await client.get_messages(channel_username, limit=20)
-            grouped_msgs = [m for m in recent_msgs if m.grouped_id == msg.grouped_id]
-            # 如果当前消息不是这组相册的最大 ID，则不是最后一条，直接 return
-            if msg.id != max(m.id for m in grouped_msgs):
+            recent = await client.get_messages(channel_username, limit=20)
+            grouped = [m for m in recent if m.grouped_id == msg.grouped_id]
+            if msg.id != max(m.id for m in grouped):
                 return
-            # 取相册内所有消息的文本合并
-            group_texts = [m.message for m in grouped_msgs if m.message]
-            merged_text = "\n".join(group_texts) if group_texts else ""
-            # 再次对合并后的文本进行清理
-            for r in removal_strings:
-                merged_text = merged_text.replace(r, "")
-            text = merged_text
-        
-        # 清理文本主体和首尾空白
-        text = re.sub(r'(\s*\n){3,}', '\n\n', text) # 移除超过2个的连续换行
-        text = text.strip()
-        
-        # 处理Markdown链接并生成引用
-        processed_text, references_string = process_markdown_links_and_add_references(text)
-        if references_string:
-            text = processed_text + "\n\n" + references_string
-        else:
-            text = processed_text
+            raw_text = "\n".join((m.message or "") for m in grouped)
 
-        # 移除常见的Markdown标记
-        # 移除加粗 (**)
-        text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-        # 移除斜体 (__)
-        text = re.sub(r'__(.*?)__', r'\1', text)
-        # 移除删除线 (~~)
-        text = re.sub(r'~~(.*?)~~', r'\1', text)
-        # 移除行内代码 (`)
-        text = re.sub(r'`(.*?)`', r'\1', text)
+        # 去掉尾部杂空行
+        raw_text = re.sub(r"(\s*\n+\s*\S*\s*\n*\s*)$", "", raw_text).rstrip()
 
-        utc_time = msg.date.replace(tzinfo=timezone.utc)
-        china_time = utc_time.astimezone(pytz.timezone("Asia/Shanghai"))
-        time_str = china_time.strftime('%Y-%m-%d %H:%M:%S')
+        # 链接解析 + 过滤
+        body, refs = process_markdown_links_and_add_references(
+            raw_text,
+            entities=msg.entities,
+            removal_strings=removal_strings,
+        )
+        text_for_send = f"{body}\n\n{refs}" if refs else body
 
+        # 北京时间
+        utc_dt = msg.date.replace(tzinfo=timezone.utc)
+        cn_dt = utc_dt.astimezone(pytz.timezone("Asia/Shanghai"))
+        time_str = cn_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+        # 图片
         images = await download_images_as_base64(msg)
+
         if config.get("debug"):
-            result = {
-                "text": text,
-                "time": time_str,
-                "images": [img[:60] + '...' for img in images]
-            }
-            print(json.dumps(result, ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    {
+                        "text": text_for_send, 
+                        "time": time_str, 
+                        "images": images
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
 
-        # 同步请求封装到 asyncio.to_thread
-        await asyncio.to_thread(send_msg_to_group, text, time_str, images)
+        await asyncio.to_thread(send_msg_to_group, text_for_send, time_str, images)
 
-    print(f"✅ 正在监听频道：{channel.title}（按 Ctrl+C 退出）")
+    print(f"✅ 监听频道：{channel.title}（Ctrl+C 退出）")
     await client.run_until_disconnected()
+
 
 try:
     with client:
+        client.loop.create_task(keep_alive())
         client.loop.run_until_complete(main())
 except KeyboardInterrupt:
     print("✅ Bye!")

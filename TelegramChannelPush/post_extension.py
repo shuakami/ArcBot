@@ -1,58 +1,72 @@
 import json
+import random
+import time
+from typing import List, Sequence, Union
+
 import requests
 
-def load_config(config_path='config.json'):
-    with open(config_path, 'r', encoding='utf-8') as f:
+# ────────────────── 读取配置 ──────────────────
+def load_config(path: str = "config.json"):
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 config = load_config()
-post_url = config.get("napcat_url", "")
-post_token = config.get("napcat_token", "")
-post_group_ids = config.get("napcat_group_ids", [])
+post_url: str = config.get("napcat_url", "")
+post_token: str = config.get("napcat_token", "")
+post_group_ids: List[str] = config.get("napcat_group_ids", [])
 
-def send_msg_to_group(text, time_str, base64_list):
+
+# ────────────────── 工具函数 ──────────────────
+def _normalize_text(text: Union[str, Sequence[str]]) -> str:
+    """tuple / list / str → 单行字符串。"""
+    if isinstance(text, (list, tuple)):
+        text = "\n\n".join(t for t in text if t)
+    return text or ""
+
+
+# ────────────────── 主发送函数 ──────────────────
+def send_msg_to_group(text, time_str: str, base64_list: List[str]):
     """
-    向指定 URL 发送包含多张图片 + 文本的请求。
-
-    - text:      TG 消息文本
-    - time_str:  消息时间（字符串）
-    - base64_list: 收到的所有图片 base64 列表，如果无图片则为空列表
+    将整理后的 Telegram 内容推送到 NapCat（QQ 机器人）。
+    text 可以是 str，或 (正文, 引用) 的 tuple/list。
     """
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {post_token}"
-    }
+    text = _normalize_text(text)
+    if text and not text.endswith("\n"):
+        text += "\n"
 
-    # 构造多张图片消息
-    # 每张图片一个元素 {"type": "image", "data": {"file": "data:image/jpeg;base64,..."}}
-    images_part = []
-    for b64_str in base64_list:
-        images_part.append({
+    # 构造消息段
+    images_part = [
+        {
             "type": "image",
-            "data": {
-                "file": f"data:image/jpeg;base64,{b64_str}"
-            }
-        })
+            "data": {"file": f"data:image/jpeg;base64,{b64}"},
+        }
+        for b64 in base64_list
+    ]
 
-    # 文本部分（示例里将TG文本与时间合并成一个字符串）
     text_part = {
         "type": "text",
         "data": {
-            "text": f"{text}\n\n发布时间：{time_str}\n信息来源: @{config.get('channel_username', '')}"
-        }
+            "text": (
+                f"{text}\n"
+                f"发布时间: {time_str}\n"
+                f"信息来源: @{config.get('channel_username', '')}\n"
+                f"Repost By ArcBot"
+            )
+        },
     }
 
-    # 将所有图片元素 + 文本元素 组成一个列表
     message_list = images_part + [text_part]
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {post_token}",
+    }
 
-    # 依次发送到每个群
-    for group_id in post_group_ids:
-        body = {
-            "group_id": group_id,
-            "message": message_list
-        }
+    # 依次推送到多个群
+    for gid in post_group_ids:
+        body = {"group_id": gid, "message": message_list}
         try:
-            resp = requests.post(post_url, headers=headers, data=json.dumps(body))
-            print(f"已向群 {group_id} 发送消息，状态码：{resp.status_code}，返回：{resp.text}")
-        except Exception as e:
-            print(f"发送到群 {group_id} 时出现异常：{e}")
+            r = requests.post(post_url, headers=headers, data=json.dumps(body, ensure_ascii=False))
+            print(f"已向群 {gid} 发送，状态 {r.status_code}，返回 {r.text}")
+            time.sleep(random.uniform(1.0, 3.0))  # 简单限速
+        except Exception as exc:
+            print(f"发送到群 {gid} 失败：{exc}")
