@@ -11,6 +11,7 @@ from telethon import TelegramClient, events
 
 from post_extension import load_config, send_msg_to_group
 from text_formatter import process_markdown_links_and_add_references
+from telethon.tl.types import MessageMediaPoll
 
 # ────────────────── 配置 ──────────────────
 config = load_config()
@@ -82,6 +83,9 @@ async def main():
         if config.get("debug"):
             print(f"收到消息：{msg}")
 
+        if (getattr(msg, "poll", None) or isinstance(msg.media, MessageMediaPoll)):
+            return
+        
         raw_text = msg.message or ""
         removal_strings = config.get("removal_strings", [])
 
